@@ -144,6 +144,18 @@ LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
   return 0;
 }
 
+LRESULT ServerImpl::OnStatisticsSummaryMessage(UINT uMsg,
+                                               WPARAM wParam,
+                                               LPARAM lParam,
+                                               BOOL& bHandled) {
+  DWORD overview_units = 0;
+  if (!m_statisticsSummaryProvider ||
+      !m_statisticsSummaryProvider(overview_units)) {
+    return 0;
+  }
+  return static_cast<LRESULT>(overview_units + 1);
+}
+
 DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
                             DWORD wParam,
                             DWORD lParam) {
@@ -481,6 +493,11 @@ void Server::AddMenuHandler(UINT uID, CommandHandler handler) {
 
 void Server::SetTrayRefreshCallback(std::function<void()> callback) {
   m_pImpl->SetTrayRefreshCallback(callback);
+}
+
+void Server::SetStatisticsSummaryProvider(
+    std::function<bool(DWORD&)> provider) {
+  m_pImpl->SetStatisticsSummaryProvider(provider);
 }
 
 HWND Server::GetHWnd() {

@@ -2,8 +2,10 @@
 #include <WeaselUI.h>
 #include <WeaselIPC.h>
 #include "SystemTraySDK.h"
+#include "InputStatisticsClient.h"
 
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 
 #define WM_WEASEL_TRAY_NOTIFY (WEASEL_IPC_LAST_COMMAND + 100)
@@ -71,6 +73,8 @@ class WeaselTrayIcon : public CSystemTray {
 
   // Runs on the server message thread (no g_api_mutex held).
   void ApplyRefresh();
+  void SetStatisticsProvider(std::function<StatisticsSummary()> provider);
+  void ShowStatisticsFailure();
 
  protected:
   virtual void CustomizeMenu(HMENU hMenu);
@@ -91,4 +95,5 @@ class WeaselTrayIcon : public CSystemTray {
   WeaselTrayIconState m_pending_state;
   std::mutex m_state_mutex;
   std::condition_variable m_state_cv;
+  std::function<StatisticsSummary()> m_statistics_provider;
 };

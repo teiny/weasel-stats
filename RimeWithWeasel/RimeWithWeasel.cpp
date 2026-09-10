@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <map>
 #include <array>
+#include <cstring>
 #include <vector>
 #include <regex>
 #include <rime_api.h>
@@ -32,6 +33,17 @@ WeaselSessionId _GenerateNewWeaselSessionId(SessionStatusMap sm, DWORD pid) {
 
 int expand_ibus_modifier(int m) {
   return (m & 0xff) | ((m & 0xff00) << 16);
+}
+
+static std::uint32_t _CountAsciiLetters(const char* text) {
+  std::uint32_t count = 0;
+  if (!text)
+    return count;
+  for (; *text; ++text) {
+    if ((*text >= 'A' && *text <= 'Z') || (*text >= 'a' && *text <= 'z'))
+      ++count;
+  }
+  return count;
 }
 
 RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
@@ -269,8 +281,34 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   if (m_disabled)
     return FALSE;
   RimeSessionId session_id = to_session_id(ipc_id);
+  const bool is_backspace =
+      keyEvent.keycode == ibus::Keycode::BackSpace &&
+      !(keyEvent.mask & ibus::Modifier::RELEASE_MASK);
+  std::size_t input_size_before = 0;
+  std::uint32_t letters_before = 0;
+  if (is_backspace) {
+    const char* input = rime_api->get_input(session_id);
+    if (input) {
+      input_size_before = strlen(input);
+      letters_before = _CountAsciiLetters(input);
+    }
+  }
   Bool handled = rime_api->process_key(session_id, keyEvent.keycode,
                                        expand_ibus_modifier(keyEvent.mask));
+  if (is_backspace && handled && input_size_before) {
+    const char* input = rime_api->get_input(session_id);
+    const std::size_t input_size_after = input ? strlen(input) : 0;
+    if (input_size_after < input_size_before && _CorrectionCallback) {
+      const std::uint32_t letters_after = _CountAsciiLetters(input);
+      try {
+        _CorrectionCallback(1, letters_before > letters_after
+                                   ? letters_before - letters_after
+                                   : 0);
+      } catch (...) {
+        // Statistics must never affect key processing.
+      }
+    }
+  }
   // vim_mode when keydown only
   if (!handled && !(keyEvent.mask & ibus::Modifier::RELEASE_MASK)) {
     bool isVimBackInCommandMode =
@@ -507,6 +545,21 @@ void RimeWithWeaselHandler::SetOption(WeaselSessionId ipc_id,
 
 void RimeWithWeaselHandler::OnUpdateUI(std::function<void()> const& cb) {
   _UpdateUICallback = cb;
+}
+
+void RimeWithWeaselHandler::OnCommit(
+    std::function<void(const char*)> const& cb) {
+  _CommitCallback = cb;
+}
+
+void RimeWithWeaselHandler::OnCorrection(
+    std::function<void(std::uint32_t, std::uint32_t)> const& cb) {
+  _CorrectionCallback = cb;
+}
+
+std::string RimeWithWeaselHandler::GetUserId() const {
+  const char* user_id = rime_api->get_user_id();
+  return user_id ? user_id : std::string();
 }
 
 bool RimeWithWeaselHandler::_IsDeployerRunning() {
@@ -751,6 +804,13 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
     actions.push_back("commit");
     std::wstring commit_text_w = escape_string(u8tow(commit.text));
     body.append(L"commit=").append(commit_text_w).append(L"\n");
+    if (commit.text && *commit.text && _CommitCallback) {
+      try {
+        _CommitCallback(commit.text);
+      } catch (...) {
+        // Statistics must never affect delivery of the commit.
+      }
+    }
     rime_api->free_commit(&commit);
   }
 

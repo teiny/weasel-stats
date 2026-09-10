@@ -3,10 +3,19 @@
 #include <filesystem>
 
 WeaselServerApp::WeaselServerApp()
-    : m_handler(std::make_unique<RimeWithWeaselHandler>(&m_ui)),
-      tray_icon(m_ui) {
+    : tray_icon(m_ui),
+      m_handler(std::make_unique<RimeWithWeaselHandler>(&m_ui)) {
   // m_handler.reset(new RimeWithWeaselHandler(&m_ui));
   m_server.SetRequestHandler(m_handler.get());
+  try {
+    tray_icon.SetStatisticsProvider(
+        [this]() { return m_statistics.GetSummary(); });
+    m_server.SetStatisticsSummaryProvider([this](DWORD& overview_units) {
+      return m_statistics.TryGetTodayOverview(overview_units);
+    });
+  } catch (...) {
+    // Statistics UI must not prevent the input service from starting.
+  }
   SetupMenuHandlers();
 }
 
@@ -33,11 +42,30 @@ int WeaselServerApp::Run() {
   m_handler->OnUpdateUI([this]() { tray_icon.RequestRefresh(); });
 
   tray_icon.Create(m_server.GetHWnd());
-  m_server.SetTrayRefreshCallback([this]() { tray_icon.ApplyRefresh(); });
+  m_server.SetTrayRefreshCallback([this]() {
+    tray_icon.ApplyRefresh();
+    if (m_statistics.ConsumeFailureNotification()) {
+      tray_icon.ShowStatisticsFailure();
+    }
+  });
   tray_icon.RequestRefresh();
+  try {
+    m_handler->OnCommit(
+        [this](const char* text) { m_statistics.TryEnqueueCommit(text); });
+    m_handler->OnCorrection([this](std::uint32_t backspaces,
+                                   std::uint32_t deleted_ascii_letters) {
+      m_statistics.TryEnqueueCorrection(backspaces, deleted_ascii_letters);
+    });
+    m_statistics.Start(WeaselUserDataPath(), m_handler->GetUserId(),
+                       install_dir(), m_server.GetHWnd(),
+                       WM_WEASEL_SERVICE_NOTIFY);
+  } catch (...) {
+    tray_icon.ShowStatisticsFailure();
+  }
 
   int ret = m_server.Run();
 
+  m_statistics.Stop();
   tray_icon.DisableRefresh();
   m_handler->Finalize();
   m_ui.Destroy();

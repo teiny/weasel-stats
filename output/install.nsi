@@ -250,16 +250,19 @@ program_files:
     ${If} ${IsNativeARM64}
       File "WeaselDeployer.exe"
       File "WeaselServer.exe"
+      File "WeaselStats.exe"
       File "rime.dll"
       File "WinSparkle.dll"
     ${ElseIf} ${IsNativeAMD64}
       File "WeaselDeployer.exe"
       File "WeaselServer.exe"
+      File "WeaselStats.exe"
       File "rime.dll"
       File "WinSparkle.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
+      File "Win32\WeaselStats.exe"
       File "Win32\rime.dll"
       File "Win32\WinSparkle.dll"
     ${Endif}
@@ -268,11 +271,13 @@ program_files:
     ${If} ${IsNativeAMD64}
       File "WeaselDeployer.exe"
       File "WeaselServer.exe"
+      File "WeaselStats.exe"
       File "rime.dll"
       File "WinSparkle.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
+      File "Win32\WeaselStats.exe"
       File "Win32\rime.dll"
       File "Win32\WinSparkle.dll"
     ${Endif}

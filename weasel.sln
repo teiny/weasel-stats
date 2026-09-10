@@ -35,9 +35,13 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WeaselIPCServer", "WeaselIP
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestResponseParser", "test\TestResponseParser\TestResponseParser.vcxproj", "{CC642427-64D7-44D9-8543-8CBBF981FAE7}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestWeaselStats", "test\TestWeaselStats\TestWeaselStats.vcxproj", "{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RimeWithWeasel", "RimeWithWeasel\RimeWithWeasel.vcxproj", "{1C497821-BD63-4F02-9094-32B185B62F23}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WeaselDeployer", "WeaselDeployer\WeaselDeployer.vcxproj", "{F53F3E9C-CC4D-4D1D-9C2E-719FE60A7E6B}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WeaselStats", "WeaselStats\WeaselStats.vcxproj", "{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WeaselSetup", "WeaselSetup\WeaselSetup.vcxproj", "{39F6E3F5-8F0B-4023-BC40-A66AE6C37095}"
 EndProject
@@ -179,6 +183,28 @@ Global
 		{39F6E3F5-8F0B-4023-BC40-A66AE6C37095}.Release|Win32.ActiveCfg = Release|Win32
 		{39F6E3F5-8F0B-4023-BC40-A66AE6C37095}.Release|Win32.Build.0 = Release|Win32
 		{39F6E3F5-8F0B-4023-BC40-A66AE6C37095}.Release|x64.ActiveCfg = Release|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|ARM.ActiveCfg = Debug|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|ARM64.ActiveCfg = Debug|x64
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|Win32.ActiveCfg = Debug|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|Win32.Build.0 = Debug|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|x64.ActiveCfg = Debug|x64
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Debug|x64.Build.0 = Debug|x64
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|ARM.ActiveCfg = Release|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|ARM64.ActiveCfg = Release|x64
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|Win32.ActiveCfg = Release|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|Win32.Build.0 = Release|Win32
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|x64.ActiveCfg = Release|x64
+		{B50D89C9-35C1-4A72-A7EF-CA9F7DD2DAF1}.Release|x64.Build.0 = Release|x64
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|ARM.ActiveCfg = Debug|Win32
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|ARM64.ActiveCfg = Debug|x64
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|Win32.ActiveCfg = Debug|Win32
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|Win32.Build.0 = Debug|Win32
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|x64.ActiveCfg = Debug|x64
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Debug|x64.Build.0 = Debug|x64
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Release|ARM.ActiveCfg = Release|Win32
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Release|ARM64.ActiveCfg = Release|x64
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Release|Win32.ActiveCfg = Release|Win32
+		{D105E17B-E09E-4EC4-BE6F-8F07E9E8B444}.Release|x64.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

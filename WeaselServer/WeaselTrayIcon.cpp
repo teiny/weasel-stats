@@ -2,6 +2,9 @@
 #include "WeaselTrayIcon.h"
 #include <atlstr.h>
 
+#include <string>
+#include <utility>
+
 // nasty
 #include <resource.h>
 
@@ -17,7 +20,42 @@ WeaselTrayIcon::WeaselTrayIcon(weasel::UI& ui)
       m_schema_ascii_icon(),
       m_disabled(false) {}
 
-void WeaselTrayIcon::CustomizeMenu(HMENU hMenu) {}
+void WeaselTrayIcon::CustomizeMenu(HMENU hMenu) {
+  StatisticsSummary summary;
+  if (m_statistics_provider) {
+    try {
+      summary = m_statistics_provider();
+    } catch (...) {
+      summary = StatisticsSummary{};
+    }
+  }
+
+  SYSTEMTIME time{};
+  GetLocalTime(&time);
+  const std::uint32_t today =
+      static_cast<std::uint32_t>(time.wYear) * 10000 +
+      static_cast<std::uint32_t>(time.wMonth) * 100 + time.wDay;
+  std::wstring label = L"今日统计：暂不可用";
+  if (summary.status == weasel::stats::SummaryStatus::kValid &&
+      summary.day == today) {
+    label = L"今日输入 " + std::to_wstring(summary.overview_units) + L" 字";
+  } else if (summary.status == weasel::stats::SummaryStatus::kDisabled) {
+    label = L"今日统计：已关闭";
+  }
+  InsertMenuW(hMenu, 0, MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED,
+              0, label.c_str());
+  InsertMenuW(hMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
+}
+
+void WeaselTrayIcon::SetStatisticsProvider(
+    std::function<StatisticsSummary()> provider) {
+  m_statistics_provider = std::move(provider);
+}
+
+void WeaselTrayIcon::ShowStatisticsFailure() {
+  ShowBalloon(L"输入统计暂不可用，输入法仍可正常使用。",
+              get_weasel_ime_name().c_str(), NIIF_WARNING);
+}
 
 BOOL WeaselTrayIcon::Create(HWND hTargetWnd) {
   HMODULE hModule = GetModuleHandle(NULL);
