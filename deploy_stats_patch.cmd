@@ -266,7 +266,9 @@ exit /b 1
 :start_server
 tasklist /fi "IMAGENAME eq WeaselServer.exe" /nh 2>nul | findstr /i /c:"WeaselServer.exe" >nul
 if not errorlevel 1 exit /b 0
-start "" /d "%WEASEL_ROOT%" "%WEASEL_SERVER%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference = 'Stop'; $shell = New-Object -ComObject Shell.Application; $shell.ShellExecute($env:WEASEL_SERVER, '', $env:WEASEL_ROOT, 'open', 0)"
+if errorlevel 1 exit /b 1
 timeout /t 2 /nobreak >nul
 tasklist /fi "IMAGENAME eq WeaselServer.exe" /nh 2>nul | findstr /i /c:"WeaselServer.exe" >nul
 if errorlevel 1 exit /b 1
