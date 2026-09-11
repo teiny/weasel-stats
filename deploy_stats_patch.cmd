@@ -55,6 +55,28 @@ if errorlevel 1 goto :failed_before_stop
 call :require_installed_file "%WEASEL_ROOT%\weaselx64.dll"
 if errorlevel 1 goto :failed_before_stop
 
+set "TSF_CLSID={A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}"
+set "TSF32_TARGET="
+set "TSF64_TARGET="
+for /f "tokens=2,*" %%A in ('reg query "HKLM\SOFTWARE\Classes\CLSID\%TSF_CLSID%\InprocServer32" /ve /reg:64 2^>nul ^| findstr /i /c:"REG_SZ"') do set "TSF64_TARGET=%%B"
+for /f "tokens=2,*" %%A in ('reg query "HKLM\SOFTWARE\Classes\CLSID\%TSF_CLSID%\InprocServer32" /ve /reg:32 2^>nul ^| findstr /i /c:"REG_SZ"') do set "TSF32_TARGET=%%B"
+if not defined TSF64_TARGET (
+  echo [失败] 找不到 64 位 TSF 注册路径。
+  goto :failed_before_stop
+)
+if not defined TSF32_TARGET (
+  echo [失败] 找不到 32 位 TSF 注册路径。
+  goto :failed_before_stop
+)
+if /i "%TSF64_TARGET%"=="%TSF32_TARGET%" (
+  echo [失败] 32 位与 64 位 TSF 注册路径异常相同：%TSF64_TARGET%
+  goto :failed_before_stop
+)
+call :require_registered_file "%TSF64_TARGET%"
+if errorlevel 1 goto :failed_before_stop
+call :require_registered_file "%TSF32_TARGET%"
+if errorlevel 1 goto :failed_before_stop
+
 set "VERSION_BASE=%WEASEL_ROOT%\WeaselServer.exe"
 set "VERSION_INSTALLED_STATS=%WEASEL_ROOT%\WeaselStats.exe"
 set "VERSION_INSTALLED_TSF32=%WEASEL_ROOT%\weasel.dll"
@@ -68,6 +90,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
 if errorlevel 1 goto :failed_before_stop
 
 echo 安装目录：%WEASEL_ROOT%
+echo 64 位 TSF：%TSF64_TARGET%
+echo 32 位 TSF：%TSF32_TARGET%
 echo 正在正常退出小狼毫服务...
 set "WEASEL_SERVER=%WEASEL_ROOT%\WeaselServer.exe"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -102,13 +126,21 @@ copy /y "%WEASEL_ROOT%\weasel.dll" "%BACKUP_DIR%\weasel.dll" >nul
 if errorlevel 1 goto :backup_failed
 copy /y "%WEASEL_ROOT%\weaselx64.dll" "%BACKUP_DIR%\weaselx64.dll" >nul
 if errorlevel 1 goto :backup_failed
+copy /y "%TSF32_TARGET%" "%BACKUP_DIR%\registered-weasel32.dll" >nul
+if errorlevel 1 goto :backup_failed
+copy /y "%TSF64_TARGET%" "%BACKUP_DIR%\registered-weasel64.dll" >nul
+if errorlevel 1 goto :backup_failed
 
-echo 正在部署三个补丁文件...
-copy /y "%PATCH_DIR%WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul
+echo 正在部署三个补丁文件到实际安装和 TSF 注册位置...
+call :replace_file "%PATCH_DIR%WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe"
 if errorlevel 1 goto :deploy_failed
-copy /y "%PATCH_DIR%weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul
+call :replace_file "%PATCH_DIR%weasel.dll" "%WEASEL_ROOT%\weasel.dll"
 if errorlevel 1 goto :deploy_failed
-copy /y "%PATCH_DIR%weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul
+call :replace_file "%PATCH_DIR%weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll"
+if errorlevel 1 goto :deploy_failed
+call :replace_file "%PATCH_DIR%weasel.dll" "%TSF32_TARGET%"
+if errorlevel 1 goto :deploy_failed
+call :replace_file "%PATCH_DIR%weaselx64.dll" "%TSF64_TARGET%"
 if errorlevel 1 goto :deploy_failed
 
 echo 正在校验部署结果...
@@ -117,6 +149,10 @@ if errorlevel 1 goto :verify_failed
 fc /b "%PATCH_DIR%weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul
 if errorlevel 1 goto :verify_failed
 fc /b "%PATCH_DIR%weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul
+if errorlevel 1 goto :verify_failed
+fc /b "%PATCH_DIR%weasel.dll" "%TSF32_TARGET%" >nul
+if errorlevel 1 goto :verify_failed
+fc /b "%PATCH_DIR%weaselx64.dll" "%TSF64_TARGET%" >nul
 if errorlevel 1 goto :verify_failed
 
 rmdir /s /q "%BACKUP_DIR%" >nul 2>&1
@@ -128,9 +164,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo [成功] 三个输入统计补丁文件已部署并校验通过。
+echo [成功] 三个输入统计补丁文件已部署到安装目录和 TSF 注册位置，并校验通过。
 echo 已重新启动小狼毫服务。
-echo 正在运行的应用仍可能使用旧版 TSF DLL；请重启相关应用，或注销后重新登录。
+echo 请重启所有正在运行的应用，或注销后重新登录。
+echo 完成后应用才会加载新的 TSF DLL。
 echo.
 pause
 exit /b 0
@@ -148,14 +185,20 @@ goto :rollback
 echo [失败] 部署后的文件校验不一致，正在回滚...
 
 :rollback
-copy /y "%BACKUP_DIR%\WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul 2>&1
-copy /y "%BACKUP_DIR%\weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul 2>&1
-copy /y "%BACKUP_DIR%\weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul 2>&1
+call :replace_file "%BACKUP_DIR%\WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul 2>&1
+call :replace_file "%BACKUP_DIR%\weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul 2>&1
+call :replace_file "%BACKUP_DIR%\weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul 2>&1
+call :replace_file "%BACKUP_DIR%\registered-weasel32.dll" "%TSF32_TARGET%" >nul 2>&1
+call :replace_file "%BACKUP_DIR%\registered-weasel64.dll" "%TSF64_TARGET%" >nul 2>&1
 fc /b "%BACKUP_DIR%\WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul
 if errorlevel 1 goto :rollback_failed
 fc /b "%BACKUP_DIR%\weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul
 if errorlevel 1 goto :rollback_failed
 fc /b "%BACKUP_DIR%\weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul
+if errorlevel 1 goto :rollback_failed
+fc /b "%BACKUP_DIR%\registered-weasel32.dll" "%TSF32_TARGET%" >nul
+if errorlevel 1 goto :rollback_failed
+fc /b "%BACKUP_DIR%\registered-weasel64.dll" "%TSF64_TARGET%" >nul
 if errorlevel 1 goto :rollback_failed
 rmdir /s /q "%BACKUP_DIR%" >nul 2>&1
 echo 原文件已恢复。
@@ -188,6 +231,36 @@ exit /b 1
 :require_installed_file
 if exist "%~1" exit /b 0
 echo [失败] 安装目录中缺少目标文件：%~1
+exit /b 1
+
+:require_registered_file
+if exist "%~1" exit /b 0
+echo [失败] TSF 注册路径中缺少目标文件：%~1
+exit /b 1
+
+:replace_file
+copy /y "%~1" "%~2" >nul 2>&1
+if not errorlevel 1 exit /b 0
+for /l %%I in (0,1,9) do (
+  if not exist "%~2.old.%%I" (
+    move /y "%~2" "%~2.old.%%I" >nul
+    if not errorlevel 1 (
+      copy /y "%~1" "%~2" >nul
+      if errorlevel 1 (
+        move /y "%~2.old.%%I" "%~2" >nul
+        exit /b 1
+      )
+      del /f /q "%~2.old.%%I" >nul 2>&1
+      if errorlevel 1 (
+        set "STALE_TSF_FILE=%~2.old.%%I"
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+          "$ErrorActionPreference = 'Stop'; Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeMethods { [DllImport(\"kernel32.dll\", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool MoveFileEx(string existingFile, string newFile, int flags); }'; if (![NativeMethods]::MoveFileEx($env:STALE_TSF_FILE, $null, 4)) { exit 1 }"
+        if errorlevel 1 exit /b 1
+      )
+      exit /b 0
+    )
+  )
+)
 exit /b 1
 
 :start_server
