@@ -2,12 +2,56 @@
 #include <resource.h>
 #include <thread>
 #include <shellapi.h>
+#include <string>
 #include "WeaselTSF.h"
 #include "LanguageBar.h"
 #include "CandidateList.h"
 #include <WeaselUtility.h>
 
 static const DWORD LANGBARITEMSINK_COOKIE = 0x42424242;
+
+static bool GetTodayStatisticsOverview(DWORD& overview_units) {
+  overview_units = 0;
+  HWND server = FindWindowW(WEASEL_IPC_WINDOW, WEASEL_IPC_WINDOW);
+  if (!server) {
+    return false;
+  }
+  DWORD_PTR encoded_overview = 0;
+  if (!SendMessageTimeoutW(
+          server, WM_WEASEL_STATISTICS_SUMMARY, 0, 0,
+          SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 50,
+          &encoded_overview) ||
+      !encoded_overview) {
+    return false;
+  }
+  overview_units = static_cast<DWORD>(encoded_overview) - 1;
+  return true;
+}
+
+static std::wstring GetStatisticsMenuLabel() {
+  DWORD overview_units = 0;
+  const bool available = GetTodayStatisticsOverview(overview_units);
+  const LANGID langid = get_language_id();
+  if (langid == TEXTSERVICE_LANGID_HANS) {
+    return available ? L"今日输入 " + std::to_wstring(overview_units) + L" 字"
+                     : L"今日统计：暂不可用";
+  }
+  if (langid == TEXTSERVICE_LANGID_HANT) {
+    return available ? L"今日輸入 " + std::to_wstring(overview_units) + L" 字"
+                     : L"今日統計：暫不可用";
+  }
+  return available
+             ? L"Today's input: " + std::to_wstring(overview_units)
+             : L"Today's input: unavailable";
+}
+
+static void PrependStatisticsMenu(HMENU menu) {
+  const std::wstring label = GetStatisticsMenuLabel();
+  InsertMenuW(menu, 0,
+              MF_BYPOSITION | MF_STRING,
+              ID_WEASELTRAY_STATS_SUMMARY, label.c_str());
+  InsertMenuW(menu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
+}
 
 static void HMENU2ITfMenu(HMENU hMenu, ITfMenu* pTfMenu) {
   /* NOTE: Only limited functions are supported */
@@ -172,6 +216,7 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click,
         menu = LoadMenuW(g_hInst, MAKEINTRESOURCE(IDR_MENU_POPUP));
       }
       HMENU popupMenu = GetSubMenu(menu, 0);
+      PrependStatisticsMenu(popupMenu);
       UINT wID = TrackPopupMenuEx(
           popupMenu, TPM_NONOTIFY | TPM_RETURNCMD | TPM_HORPOSANIMATION, pt.x,
           pt.y, hwnd, NULL);
@@ -183,6 +228,11 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click,
 }
 
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
+  const std::wstring label = GetStatisticsMenuLabel();
+  pMenu->AddMenuItem(ID_WEASELTRAY_STATS_SUMMARY, 0, NULL,
+                     NULL, label.c_str(), static_cast<ULONG>(label.size()),
+                     NULL);
+  pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, NULL, NULL, NULL, 0, NULL);
   HMENU menu = LoadMenuW(g_hInst, MAKEINTRESOURCE(IDR_MENU_POPUP));
   HMENU popupMenu = GetSubMenu(menu, 0);
   HMENU2ITfMenu(popupMenu, pMenu);

@@ -54,7 +54,7 @@ add_links("atls", "shell32", "advapi32", "gdi32", "user32", "uuid", "ole32")
 includes("WeaselIPC", "WeaselUI", "WeaselTSF")
 
 if is_arch("x64") or is_arch("x86") then
-  includes("RimeWithWeasel", "WeaselIPCServer", "WeaselServer", "WeaselDeployer")
+  includes("RimeWithWeasel", "WeaselIPCServer", "WeaselServer", "WeaselDeployer", "WeaselStats")
 end
 
 if is_arch("x86") then
@@ -64,6 +64,7 @@ end
 if is_mode("debug") then
   includes("test/TestWeaselIPC")
   includes("test/TestResponseParser")
+  includes("test/TestWeaselStats")
 else
   add_cxflags("/GL")
   add_ldflags("/LTCG /INCREMENTAL:NO", {force = true})

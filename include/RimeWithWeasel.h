@@ -1,6 +1,7 @@
 #pragma once
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <mutex>
@@ -64,6 +65,11 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void UpdateColorTheme(BOOL darkMode);
 
   void OnUpdateUI(std::function<void()> const& cb);
+  void OnCommit(std::function<void(const char*)> const& cb);
+  void OnCorrection(
+      std::function<void(std::uint32_t, std::uint32_t)> const& cb);
+  std::string GetUserId() const;
+  std::string GetSyncDir() const;
 
  private:
   void _Setup();
@@ -105,6 +111,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::map<std::string, bool> m_show_notifications;
   std::map<std::string, bool> m_show_notifications_base;
   std::function<void()> _UpdateUICallback;
+  std::function<void(const char*)> _CommitCallback;
+  std::function<void(std::uint32_t, std::uint32_t)> _CorrectionCallback;
 
   static void OnNotify(void* context_object,
                        uintptr_t session_id,

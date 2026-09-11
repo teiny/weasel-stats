@@ -38,6 +38,7 @@ enum WEASEL_IPC_COMMAND {
 // Posted by WeaselTrayIcon to the server window so that Shell_NotifyIcon runs
 // on the server message thread instead of a pipe worker thread.
 #define WM_WEASEL_SERVICE_NOTIFY (WEASEL_IPC_LAST_COMMAND + 200)
+#define WM_WEASEL_STATISTICS_SUMMARY (WEASEL_IPC_LAST_COMMAND + 201)
 
 namespace weasel {
 struct PipeMessage {
@@ -170,6 +171,9 @@ class Server {
   // Callback invoked on the server message thread when a tray icon refresh is
   // requested from a pipe worker thread.
   void SetTrayRefreshCallback(std::function<void()> callback);
+  void SetStatisticsSummaryProvider(
+      std::function<bool(DWORD&)> provider);
+  void SetStatisticsSyncHandler(std::function<bool()> handler);
 
  private:
   ServerImpl* m_pImpl;

@@ -1,5 +1,6 @@
-param (
-  [switch]$h, [string]$help, [string]$proxy, [string]$tag, [string]$os, [string]$build_variant, [boolean]$extract, [string]$use
+﻿param (
+  [switch]$h, [string]$help, [string]$proxy, [string]$tag, [string]$os, [string]$build_variant, [boolean]$extract, [string]$use,
+  [switch]$skip_server_stop
 )
 if ($h -or $help -eq "--help") {
   $msg = "
@@ -15,6 +16,7 @@ if ($h -or $help -eq "--help") {
   -build_variant [string]        default msvc for Windows, universal for macOS. clang and mingw are optional for Windows too
   -extract [boolean]             default false, 7z in PATH is required
   -use [string]                  dev is for building weasel, weasel is for common usage in weasel(update rime.dll)
+  -skip_server_stop              do not stop a running WeaselServer in dev mode
 
   All these params are optional.
   To use some kind of mirror of github, set it up in ~/.git-rime.conf.ps1
@@ -334,7 +336,9 @@ if ($null -ne $response.assets -and $response.assets.Count -gt 0) {
         if ((Test-Path ".\include") `
         -and (Test-Path ".\lib") -and (Test-Path ".\lib64") `
         -and (Test-Path ".\output\Win32")) {
-          KillWeaselServer
+          if (!$skip_server_stop) {
+            KillWeaselServer
+          }
           Remove-Item include\rime_*.h -ErrorAction SilentlyContinue
           MyCopyItem -src $dir86 -subpath "dist\include\rime_*.h" -dest "include\"
           MyCopyItem -src $dir86 -subpath "dist\lib\rime.lib"     -dest "lib\"

@@ -144,6 +144,18 @@ LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
   return 0;
 }
 
+LRESULT ServerImpl::OnStatisticsSummaryMessage(UINT uMsg,
+                                               WPARAM wParam,
+                                               LPARAM lParam,
+                                               BOOL& bHandled) {
+  DWORD overview_units = 0;
+  if (!m_statisticsSummaryProvider ||
+      !m_statisticsSummaryProvider(overview_units)) {
+    return 0;
+  }
+  return static_cast<LRESULT>(overview_units + 1);
+}
+
 DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
                             DWORD wParam,
                             DWORD lParam) {
@@ -318,6 +330,12 @@ DWORD ServerImpl::OnEndMaintenance(WEASEL_IPC_COMMAND uMsg,
                                    DWORD lParam) {
   if (m_pRequestHandler)
     m_pRequestHandler->EndMaintenance();
+  try {
+    if (m_statisticsSyncHandler)
+      m_statisticsSyncHandler();
+  } catch (...) {
+    // Statistics synchronization must not affect maintenance completion.
+  }
   return 0;
 }
 
@@ -481,6 +499,15 @@ void Server::AddMenuHandler(UINT uID, CommandHandler handler) {
 
 void Server::SetTrayRefreshCallback(std::function<void()> callback) {
   m_pImpl->SetTrayRefreshCallback(callback);
+}
+
+void Server::SetStatisticsSummaryProvider(
+    std::function<bool(DWORD&)> provider) {
+  m_pImpl->SetStatisticsSummaryProvider(provider);
+}
+
+void Server::SetStatisticsSyncHandler(std::function<bool()> handler) {
+  m_pImpl->SetStatisticsSyncHandler(handler);
 }
 
 HWND Server::GetHWnd() {
