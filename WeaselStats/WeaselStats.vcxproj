@@ -96,6 +96,9 @@
     <ClInclude Include="TextMetrics.h" />
     <ClInclude Include="WinSqlite.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="WeaselStats.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
