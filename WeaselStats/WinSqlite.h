@@ -4,12 +4,14 @@
 
 struct sqlite3;
 struct sqlite3_stmt;
+struct sqlite3_backup;
 using sqlite3_int64 = long long;
 using sqlite3_destructor_type = void(WINAPI*)(void*);
 
 constexpr int SQLITE_OK = 0;
 constexpr int SQLITE_ROW = 100;
 constexpr int SQLITE_DONE = 101;
+constexpr int SQLITE_OPEN_READONLY = 0x00000001;
 constexpr int SQLITE_OPEN_READWRITE = 0x00000002;
 constexpr int SQLITE_OPEN_CREATE = 0x00000004;
 constexpr int SQLITE_OPEN_FULLMUTEX = 0x00010000;
@@ -44,10 +46,17 @@ class WinSqlite {
       WINAPI*)(sqlite3_stmt*, int, const char*, int, sqlite3_destructor_type);
   using BindInt64 = int(WINAPI*)(sqlite3_stmt*, int, sqlite3_int64);
   using ColumnInt64 = sqlite3_int64(WINAPI*)(sqlite3_stmt*, int);
+  using ColumnText = const unsigned char*(WINAPI*)(sqlite3_stmt*, int);
   using Changes = int(WINAPI*)(sqlite3*);
   using Errmsg = const char*(WINAPI*)(sqlite3*);
   using BusyTimeout = int(WINAPI*)(sqlite3*, int);
   using LibversionNumber = int(WINAPI*)();
+  using BackupInit = sqlite3_backup*(WINAPI*)(sqlite3*,
+                                               const char*,
+                                               sqlite3*,
+                                               const char*);
+  using BackupStep = int(WINAPI*)(sqlite3_backup*, int);
+  using BackupFinish = int(WINAPI*)(sqlite3_backup*);
 
   OpenV2 open_v2 = nullptr;
   Close close = nullptr;
@@ -59,10 +68,14 @@ class WinSqlite {
   BindText bind_text = nullptr;
   BindInt64 bind_int64 = nullptr;
   ColumnInt64 column_int64 = nullptr;
+  ColumnText column_text = nullptr;
   Changes changes = nullptr;
   Errmsg errmsg = nullptr;
   BusyTimeout busy_timeout = nullptr;
   LibversionNumber libversion_number = nullptr;
+  BackupInit backup_init = nullptr;
+  BackupStep backup_step = nullptr;
+  BackupFinish backup_finish = nullptr;
 
  private:
   HMODULE module_ = nullptr;

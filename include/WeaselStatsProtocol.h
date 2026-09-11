@@ -16,6 +16,7 @@ enum class MessageType : std::uint16_t {
   kCorrection = 2,
   kGetToday = 3,
   kShutdown = 4,
+  kSync = 5,
 };
 
 enum class ResponseStatus : std::uint16_t {
@@ -23,6 +24,7 @@ enum class ResponseStatus : std::uint16_t {
   kInvalidRequest = 1,
   kDatabaseUnavailable = 2,
   kUnsupportedPlatform = 3,
+  kSyncIncomplete = 4,
 };
 
 enum class SummaryStatus : std::uint16_t {

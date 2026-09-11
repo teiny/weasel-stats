@@ -13,6 +13,9 @@ WeaselServerApp::WeaselServerApp()
     m_server.SetStatisticsSummaryProvider([this](DWORD& overview_units) {
       return m_statistics.TryGetTodayOverview(overview_units);
     });
+    m_server.SetStatisticsSyncHandler([this]() {
+      return m_statistics.TryEnqueueSync(m_handler->GetSyncDir());
+    });
   } catch (...) {
     // Statistics UI must not prevent the input service from starting.
   }
@@ -46,6 +49,8 @@ int WeaselServerApp::Run() {
     tray_icon.ApplyRefresh();
     if (m_statistics.ConsumeFailureNotification()) {
       tray_icon.ShowStatisticsFailure();
+    } else if (m_statistics.ConsumeSyncFailureNotification()) {
+      tray_icon.ShowStatisticsSyncFailure();
     }
   });
   tray_icon.RequestRefresh();
@@ -56,8 +61,8 @@ int WeaselServerApp::Run() {
                                    std::uint32_t deleted_ascii_letters) {
       m_statistics.TryEnqueueCorrection(backspaces, deleted_ascii_letters);
     });
-    m_statistics.Start(WeaselUserDataPath(), m_handler->GetUserId(),
-                       install_dir(), m_server.GetHWnd(),
+    m_statistics.Start(m_handler->GetUserId(), install_dir(),
+                       m_server.GetHWnd(),
                        WM_WEASEL_SERVICE_NOTIFY);
   } catch (...) {
     tray_icon.ShowStatisticsFailure();

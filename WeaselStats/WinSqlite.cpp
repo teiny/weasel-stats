@@ -82,10 +82,14 @@ bool WinSqlite::Load() {
   LOAD_SQLITE_API(bind_text, "sqlite3_bind_text");
   LOAD_SQLITE_API(bind_int64, "sqlite3_bind_int64");
   LOAD_SQLITE_API(column_int64, "sqlite3_column_int64");
+  LOAD_SQLITE_API(column_text, "sqlite3_column_text");
   LOAD_SQLITE_API(changes, "sqlite3_changes");
   LOAD_SQLITE_API(errmsg, "sqlite3_errmsg");
   LOAD_SQLITE_API(busy_timeout, "sqlite3_busy_timeout");
   LOAD_SQLITE_API(libversion_number, "sqlite3_libversion_number");
+  LOAD_SQLITE_API(backup_init, "sqlite3_backup_init");
+  LOAD_SQLITE_API(backup_step, "sqlite3_backup_step");
+  LOAD_SQLITE_API(backup_finish, "sqlite3_backup_finish");
 
 #undef LOAD_SQLITE_API
   return true;

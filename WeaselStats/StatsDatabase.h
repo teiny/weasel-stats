@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 #include <WeaselStatsProtocol.h>
@@ -32,9 +33,22 @@ class StatsDatabase {
                         std::uint32_t deleted_ascii_letters,
                         Response& response);
   bool GetSummary(std::uint32_t day, Response& response);
+  bool Synchronize(const std::filesystem::path& sync_directory,
+                   std::uint32_t day,
+                   Response& response);
 
  private:
   bool Execute(const char* sql);
+  bool CreateSchema();
+  bool MigrateSchema1();
+  bool ValidateSchema2();
+  bool InitializeGeneration();
+  bool IsSyncInitialized(bool& initialized);
+  bool SetSyncInitialized();
+  bool ValidateSnapshot(const std::filesystem::path& path,
+                        int& schema_version);
+  bool MergeSnapshot(const std::filesystem::path& path, int schema_version);
+  bool PublishSnapshot(const std::filesystem::path& path);
   bool BeginEvent(std::string_view server_id,
                   std::uint64_t sequence,
                   bool& duplicate);
@@ -54,6 +68,8 @@ class StatsDatabase {
 
   WinSqlite& sqlite_;
   sqlite3* database_ = nullptr;
+  std::filesystem::path database_path_;
+  std::string generation_id_;
 };
 
 }  // namespace weasel::stats

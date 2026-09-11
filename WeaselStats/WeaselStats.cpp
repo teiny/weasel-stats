@@ -1,7 +1,5 @@
 #include <Windows.h>
-#include <shellapi.h>
 
-#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -31,13 +29,27 @@ std::wstring MutexName() {
   return L"Local\\WeaselStats-" + std::to_wstring(session_id);
 }
 
-std::wstring ArgumentValue(int argc, wchar_t** argv, std::wstring_view name) {
-  for (int index = 1; index + 1 < argc; ++index) {
-    if (name == argv[index]) {
-      return argv[index + 1];
+fs::path UserDataDirectory() {
+  wchar_t path[MAX_PATH] = {};
+  HKEY key = nullptr;
+  if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel", 0,
+                    KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
+    DWORD size = sizeof(path);
+    DWORD type = 0;
+    const LSTATUS result =
+        RegQueryValueExW(key, L"RimeUserDir", nullptr, &type,
+                         reinterpret_cast<LPBYTE>(path), &size);
+    RegCloseKey(key);
+    if (result == ERROR_SUCCESS && type == REG_SZ && path[0]) {
+      return fs::path(path);
     }
   }
-  return {};
+  const DWORD expanded =
+      ExpandEnvironmentStringsW(L"%AppData%\\Rime", path, _countof(path));
+  if (!expanded || expanded > _countof(path)) {
+    return {};
+  }
+  return fs::path(path);
 }
 
 std::string_view FixedString(const char* value, std::size_t capacity) {
@@ -86,6 +98,25 @@ bool HandleRequest(weasel::stats::StatsDatabase& database,
     case MessageType::kGetToday:
       if (!request.day || !database.GetSummary(request.day, response)) {
         response.status = ResponseStatus::kDatabaseUnavailable;
+      }
+      return true;
+    case MessageType::kSync:
+      if (!request.day || !request.text_size) {
+        response.status = ResponseStatus::kInvalidRequest;
+        return true;
+      }
+      try {
+        const fs::path sync_directory = fs::u8path(
+            std::string(request.text, request.text_size));
+        if (!database.Synchronize(sync_directory, request.day, response)) {
+          response.status =
+              response.status == ResponseStatus::kOk
+                  ? ResponseStatus::kSyncIncomplete
+                  : ResponseStatus::kDatabaseUnavailable;
+        }
+      } catch (...) {
+        response = Response{};
+        response.status = ResponseStatus::kSyncIncomplete;
       }
       return true;
     case MessageType::kShutdown:
@@ -143,15 +174,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     return 0;
   }
 
-  int argc = 0;
-  wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-  if (!argv) {
-    CloseHandle(mutex);
-    return 1;
-  }
-  const std::wstring data_directory =
-      ArgumentValue(argc, argv, L"--data-directory");
-  LocalFree(argv);
+  const fs::path data_directory = UserDataDirectory();
   if (data_directory.empty()) {
     CloseHandle(mutex);
     return 1;
@@ -163,8 +186,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     weasel::stats::WinSqlite sqlite;
     if (sqlite.Load()) {
       weasel::stats::StatsDatabase database(sqlite);
-      if (database.Open(fs::path(data_directory) /
-                        L"weasel-input-statistics.sqlite3")) {
+      if (database.Open(data_directory / L"weasel-input-statistics.sqlite3")) {
         result = RunPipeServer(database);
       }
     }

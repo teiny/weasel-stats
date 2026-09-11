@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <vector>
 
 namespace {
 
@@ -18,27 +17,6 @@ std::wstring PipeName() {
   DWORD session_id = 0;
   ProcessIdToSessionId(GetCurrentProcessId(), &session_id);
   return L"\\\\.\\pipe\\WeaselStats-" + std::to_wstring(session_id);
-}
-
-std::wstring QuoteArgument(const std::wstring& value) {
-  std::wstring result = L"\"";
-  std::size_t backslashes = 0;
-  for (const wchar_t character : value) {
-    if (character == L'\\') {
-      ++backslashes;
-    } else if (character == L'\"') {
-      result.append(backslashes * 2 + 1, L'\\');
-      result.push_back(character);
-      backslashes = 0;
-    } else {
-      result.append(backslashes, L'\\');
-      backslashes = 0;
-      result.push_back(character);
-    }
-  }
-  result.append(backslashes * 2, L'\\');
-  result.push_back(L'\"');
-  return result;
 }
 
 std::string MakeServerId() {
@@ -67,7 +45,6 @@ InputStatisticsClient::~InputStatisticsClient() {
 }
 
 void InputStatisticsClient::Start(
-    const std::filesystem::path& data_directory,
     const std::string& device_id,
     const std::filesystem::path& install_directory,
     HWND notification_window,
@@ -78,7 +55,6 @@ void InputStatisticsClient::Start(
     if (worker_.joinable()) {
       return;
     }
-    data_directory_ = data_directory;
     stats_executable_ = install_directory / L"WeaselStats.exe";
     device_id_ = device_id.empty() ? "unknown-device" : device_id;
     server_id_ = MakeServerId();
@@ -90,6 +66,8 @@ void InputStatisticsClient::Start(
     stop_requested_.store(false);
     failure_notification_pending_.store(false);
     failure_signaled_.store(false);
+    sync_pending_.store(false);
+    sync_failure_notification_pending_.store(false);
     worker_ = std::thread(&InputStatisticsClient::WorkerMain, this);
   } catch (...) {
     SignalFailure();
@@ -103,6 +81,7 @@ void InputStatisticsClient::Stop() noexcept {
     if (worker_.joinable()) {
       worker_.join();
     }
+    sync_pending_.store(false);
   } catch (...) {
   }
 }
@@ -166,6 +145,43 @@ bool InputStatisticsClient::TryEnqueueCorrection(
   }
 }
 
+bool InputStatisticsClient::TryEnqueueSync(
+    const std::string& sync_directory) noexcept {
+  try {
+    if (sync_directory.empty() ||
+        sync_directory.size() >= weasel::stats::kCommitTextCapacity ||
+        !queue_ || stop_requested_.load()) {
+      SignalSyncFailure();
+      return false;
+    }
+    bool expected = false;
+    if (!sync_pending_.compare_exchange_strong(expected, true)) {
+      return true;
+    }
+    std::unique_lock<std::mutex> lock(queue_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || queue_size_ == queue_->size()) {
+      sync_pending_.store(false);
+      SignalSyncFailure();
+      return false;
+    }
+    Event& event = (*queue_)[queue_tail_];
+    event = Event{};
+    event.type = EventType::kSync;
+    event.day = CurrentLocalDay();
+    event.text_size = static_cast<std::uint32_t>(sync_directory.size());
+    memcpy(event.text, sync_directory.data(), sync_directory.size());
+    queue_tail_ = (queue_tail_ + 1) % queue_->size();
+    ++queue_size_;
+    lock.unlock();
+    queue_changed_.notify_one();
+    return true;
+  } catch (...) {
+    sync_pending_.store(false);
+    SignalSyncFailure();
+    return false;
+  }
+}
+
 StatisticsSummary InputStatisticsClient::GetSummary() const noexcept {
   try {
     std::unique_lock<std::mutex> lock(summary_mutex_, std::try_to_lock);
@@ -195,6 +211,10 @@ bool InputStatisticsClient::ConsumeFailureNotification() noexcept {
   return failure_notification_pending_.exchange(false);
 }
 
+bool InputStatisticsClient::ConsumeSyncFailureNotification() noexcept {
+  return sync_failure_notification_pending_.exchange(false);
+}
+
 void InputStatisticsClient::WorkerMain() noexcept {
   try {
     LaunchStatsProcess();
@@ -210,6 +230,22 @@ void InputStatisticsClient::WorkerMain() noexcept {
     while (!stop_requested_.load()) {
       Event event{};
       if (TryPop(event)) {
+        if (event.type == EventType::kSync) {
+          const bool synchronized =
+              SendSyncWithRetry(MakeRequest(event), response);
+          if (weasel::stats::IsValid(response) &&
+              response.day == event.day &&
+              (response.status == weasel::stats::ResponseStatus::kOk ||
+               response.status ==
+                   weasel::stats::ResponseStatus::kSyncIncomplete)) {
+            UpdateSummary(response);
+          }
+          sync_pending_.store(false);
+          if (!synchronized && !stop_requested_.load()) {
+            SignalSyncFailure();
+          }
+          continue;
+        }
         if (!SendWithRetry(MakeRequest(event), response)) {
           MarkUnavailable();
           SignalFailure();
@@ -231,8 +267,9 @@ void InputStatisticsClient::WorkerMain() noexcept {
 
     auto shutdown = MakeSummaryRequest();
     shutdown.type = weasel::stats::MessageType::kShutdown;
-    SendOnce(shutdown, response);
+    SendOnce(shutdown, response, kPipeTimeoutMilliseconds);
   } catch (...) {
+    sync_pending_.store(false);
     try {
       MarkUnavailable();
     } catch (...) {
@@ -242,17 +279,11 @@ void InputStatisticsClient::WorkerMain() noexcept {
 }
 
 bool InputStatisticsClient::LaunchStatsProcess() {
-  std::wstring command = QuoteArgument(stats_executable_.wstring()) +
-                         L" --data-directory " +
-                         QuoteArgument(data_directory_.wstring());
-  std::vector<wchar_t> mutable_command(command.begin(), command.end());
-  mutable_command.push_back(L'\0');
-
   STARTUPINFOW startup_info{};
   startup_info.cb = sizeof(startup_info);
   PROCESS_INFORMATION process_info{};
   const BOOL created = CreateProcessW(
-      stats_executable_.c_str(), mutable_command.data(), nullptr, nullptr,
+      stats_executable_.c_str(), nullptr, nullptr, nullptr,
       FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, nullptr, nullptr,
       &startup_info, &process_info);
   if (created) {
@@ -265,8 +296,30 @@ bool InputStatisticsClient::LaunchStatsProcess() {
 bool InputStatisticsClient::SendWithRetry(const weasel::stats::Request& request,
                                           weasel::stats::Response& response) {
   for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
-    if (stop_requested_.load() || SendOnce(request, response)) {
-      return !stop_requested_.load();
+    if (stop_requested_.load()) {
+      return false;
+    }
+    if (SendOnce(request, response, kPipeTimeoutMilliseconds) &&
+        response.status == weasel::stats::ResponseStatus::kOk) {
+      return true;
+    }
+    if (attempt + 1 < kMaxAttempts && WaitForStop(150u << attempt)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+bool InputStatisticsClient::SendSyncWithRetry(
+    const weasel::stats::Request& request,
+    weasel::stats::Response& response) {
+  for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    if (stop_requested_.load()) {
+      return false;
+    }
+    if (SendOnce(request, response, kSyncTimeoutMilliseconds) &&
+        response.status == weasel::stats::ResponseStatus::kOk) {
+      return true;
     }
     if (attempt + 1 < kMaxAttempts && WaitForStop(150u << attempt)) {
       return false;
@@ -276,16 +329,112 @@ bool InputStatisticsClient::SendWithRetry(const weasel::stats::Request& request,
 }
 
 bool InputStatisticsClient::SendOnce(const weasel::stats::Request& request,
-                                     weasel::stats::Response& response) {
+                                     weasel::stats::Response& response,
+                                     DWORD timeout_milliseconds) {
+  const bool allow_during_stop =
+      request.type == weasel::stats::MessageType::kShutdown;
+  const ULONGLONG deadline = GetTickCount64() + timeout_milliseconds;
+  const std::wstring pipe_name = PipeName();
+  while (allow_during_stop || !stop_requested_.load()) {
+    const ULONGLONG now = GetTickCount64();
+    if (now >= deadline) {
+      return false;
+    }
+    const DWORD wait = static_cast<DWORD>((std::min<ULONGLONG>)(
+        deadline - now, 100));
+    if (WaitNamedPipeW(pipe_name.c_str(), wait)) {
+      break;
+    }
+    const DWORD error = GetLastError();
+    if (error != ERROR_SEM_TIMEOUT && error != ERROR_FILE_NOT_FOUND &&
+        error != ERROR_PIPE_BUSY) {
+      return false;
+    }
+    if (error == ERROR_FILE_NOT_FOUND) {
+      if (allow_during_stop) {
+        Sleep(wait);
+      } else if (WaitForStop(wait)) {
+        return false;
+      }
+    }
+  }
+  if (!allow_during_stop && stop_requested_.load()) {
+    return false;
+  }
+
+  HANDLE pipe =
+      CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                  OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+  if (pipe == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  DWORD mode = PIPE_READMODE_MESSAGE;
+  if (!SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr)) {
+    CloseHandle(pipe);
+    return false;
+  }
+
+  struct PendingTransaction {
+    OVERLAPPED operation{};
+    weasel::stats::Response response{};
+  };
+  auto transaction = std::make_unique<PendingTransaction>();
+  HANDLE completion = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!completion) {
+    CloseHandle(pipe);
+    return false;
+  }
+  transaction->operation.hEvent = completion;
   DWORD bytes_read = 0;
   response = weasel::stats::Response{};
-  const BOOL success = CallNamedPipeW(
-      PipeName().c_str(), const_cast<weasel::stats::Request*>(&request),
-      sizeof(request), &response, sizeof(response), &bytes_read,
-      kPipeTimeoutMilliseconds);
+  BOOL completed = TransactNamedPipe(
+      pipe, const_cast<weasel::stats::Request*>(&request), sizeof(request),
+      &transaction->response, sizeof(transaction->response), &bytes_read,
+      &transaction->operation);
+  if (!completed && GetLastError() != ERROR_IO_PENDING) {
+    CloseHandle(completion);
+    CloseHandle(pipe);
+    return false;
+  }
+
+  bool success = completed != FALSE;
+  while (!success && (allow_during_stop || !stop_requested_.load())) {
+    const ULONGLONG now = GetTickCount64();
+    if (now >= deadline) {
+      break;
+    }
+    const DWORD wait = static_cast<DWORD>((std::min<ULONGLONG>)(
+        deadline - now, 100));
+    const DWORD result = WaitForSingleObject(completion, wait);
+    if (result == WAIT_OBJECT_0) {
+      success =
+          GetOverlappedResult(pipe, &transaction->operation, &bytes_read,
+                              FALSE) != FALSE;
+      break;
+    }
+    if (result != WAIT_TIMEOUT) {
+      break;
+    }
+  }
+  if (!success) {
+    CancelIoEx(pipe, &transaction->operation);
+    CloseHandle(pipe);
+    pipe = INVALID_HANDLE_VALUE;
+    if (WaitForSingleObject(completion, 1000) != WAIT_OBJECT_0) {
+      transaction.release();
+      completion = nullptr;
+    }
+  } else {
+    response = transaction->response;
+  }
+  if (completion) {
+    CloseHandle(completion);
+  }
+  if (pipe != INVALID_HANDLE_VALUE) {
+    CloseHandle(pipe);
+  }
   return success && bytes_read == sizeof(response) &&
-         weasel::stats::IsValid(response) &&
-         response.status == weasel::stats::ResponseStatus::kOk;
+         weasel::stats::IsValid(response);
 }
 
 bool InputStatisticsClient::WaitForStop(DWORD milliseconds) {
@@ -313,9 +462,17 @@ bool InputStatisticsClient::TryPop(Event& event) {
 weasel::stats::Request InputStatisticsClient::MakeRequest(
     const Event& event) const {
   weasel::stats::Request request{};
-  request.type = event.type == EventType::kCommit
-                     ? weasel::stats::MessageType::kCommit
-                     : weasel::stats::MessageType::kCorrection;
+  switch (event.type) {
+    case EventType::kCommit:
+      request.type = weasel::stats::MessageType::kCommit;
+      break;
+    case EventType::kCorrection:
+      request.type = weasel::stats::MessageType::kCorrection;
+      break;
+    case EventType::kSync:
+      request.type = weasel::stats::MessageType::kSync;
+      break;
+  }
   request.day = event.day;
   request.sequence = event.sequence;
   request.backspace_count = event.backspaces;
@@ -360,6 +517,13 @@ void InputStatisticsClient::SignalFailure() noexcept {
     return;
   }
   failure_notification_pending_.store(true);
+  if (notification_window_ && notification_message_) {
+    PostMessage(notification_window_, notification_message_, 0, 0);
+  }
+}
+
+void InputStatisticsClient::SignalSyncFailure() noexcept {
+  sync_failure_notification_pending_.store(true);
   if (notification_window_ && notification_message_) {
     PostMessage(notification_window_, notification_message_, 0, 0);
   }

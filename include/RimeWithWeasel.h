@@ -69,6 +69,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   void OnCorrection(
       std::function<void(std::uint32_t, std::uint32_t)> const& cb);
   std::string GetUserId() const;
+  std::string GetSyncDir() const;
 
  private:
   void _Setup();

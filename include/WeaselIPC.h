@@ -173,6 +173,7 @@ class Server {
   void SetTrayRefreshCallback(std::function<void()> callback);
   void SetStatisticsSummaryProvider(
       std::function<bool(DWORD&)> provider);
+  void SetStatisticsSyncHandler(std::function<bool()> handler);
 
  private:
   ServerImpl* m_pImpl;

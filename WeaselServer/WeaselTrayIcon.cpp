@@ -57,6 +57,11 @@ void WeaselTrayIcon::ShowStatisticsFailure() {
               get_weasel_ime_name().c_str(), NIIF_WARNING);
 }
 
+void WeaselTrayIcon::ShowStatisticsSyncFailure() {
+  ShowBalloon(L"输入统计同步失败，输入和 Rime 用户数据同步不受影响。",
+              get_weasel_ime_name().c_str(), NIIF_WARNING);
+}
+
 BOOL WeaselTrayIcon::Create(HWND hTargetWnd) {
   HMODULE hModule = GetModuleHandle(NULL);
   CIcon icon;

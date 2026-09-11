@@ -330,6 +330,12 @@ DWORD ServerImpl::OnEndMaintenance(WEASEL_IPC_COMMAND uMsg,
                                    DWORD lParam) {
   if (m_pRequestHandler)
     m_pRequestHandler->EndMaintenance();
+  try {
+    if (m_statisticsSyncHandler)
+      m_statisticsSyncHandler();
+  } catch (...) {
+    // Statistics synchronization must not affect maintenance completion.
+  }
   return 0;
 }
 
@@ -498,6 +504,10 @@ void Server::SetTrayRefreshCallback(std::function<void()> callback) {
 void Server::SetStatisticsSummaryProvider(
     std::function<bool(DWORD&)> provider) {
   m_pImpl->SetStatisticsSummaryProvider(provider);
+}
+
+void Server::SetStatisticsSyncHandler(std::function<bool()> handler) {
+  m_pImpl->SetStatisticsSyncHandler(handler);
 }
 
 HWND Server::GetHWnd() {

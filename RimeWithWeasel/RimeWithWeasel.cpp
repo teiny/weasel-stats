@@ -562,6 +562,17 @@ std::string RimeWithWeaselHandler::GetUserId() const {
   return user_id ? user_id : std::string();
 }
 
+std::string RimeWithWeaselHandler::GetSyncDir() const {
+  if (RIME_API_AVAILABLE(rime_api, get_sync_dir_s)) {
+    std::array<char, 4096> path{};
+    rime_api->get_sync_dir_s(path.data(), path.size());
+    path.back() = '\0';
+    return path.data();
+  }
+  const char* path = rime_api->get_sync_dir();
+  return path ? path : std::string();
+}
+
 bool RimeWithWeaselHandler::_IsDeployerRunning() {
   HANDLE hMutex = CreateMutex(NULL, TRUE, L"WeaselDeployerMutex");
   bool deployer_detected = hMutex && GetLastError() == ERROR_ALREADY_EXISTS;

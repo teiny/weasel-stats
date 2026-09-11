@@ -102,6 +102,9 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   void SetStatisticsSummaryProvider(std::function<bool(DWORD&)> provider) {
     m_statisticsSummaryProvider = provider;
   }
+  void SetStatisticsSyncHandler(std::function<bool()> handler) {
+    m_statisticsSyncHandler = handler;
+  }
 
  private:
   void _Finailize();
@@ -114,6 +117,7 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   std::map<UINT, CommandHandler> m_MenuHandlers;
   std::function<void()> m_trayRefreshCallback;
   std::function<bool(DWORD&)> m_statisticsSummaryProvider;
+  std::function<bool()> m_statisticsSyncHandler;
   HMODULE m_hUser32Module;
   SecurityAttribute sa;
   BOOL m_darkMode;

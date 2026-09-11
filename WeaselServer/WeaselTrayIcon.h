@@ -75,6 +75,7 @@ class WeaselTrayIcon : public CSystemTray {
   void ApplyRefresh();
   void SetStatisticsProvider(std::function<StatisticsSummary()> provider);
   void ShowStatisticsFailure();
+  void ShowStatisticsSyncFailure();
 
  protected:
   virtual void CustomizeMenu(HMENU hMenu);

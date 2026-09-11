@@ -2,7 +2,7 @@ target("WeaselStats")
   set_kind("binary")
   add_files("./*.cpp")
   add_rules("subwin")
-  add_links("kernel32", "shell32")
+  add_links("kernel32", "advapi32")
 
   add_ldflags("/DEBUG /OPT:REF /OPT:ICF /LARGEADDRESSAWARE /ERRORREPORT:QUEUE")
   before_build(function(target)
