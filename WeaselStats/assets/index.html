@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'none'">
+  <title>小狼毫输入统计</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/echarts.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <div>
+        <h1>输入统计</h1>
+        <p>一个汉字或一个英文单词计为 1 字</p>
+      </div>
+      <div class="header-actions">
+        <div class="view-tabs" role="tablist" aria-label="报表视图">
+          <button type="button" class="active" data-view="line" role="tab"
+                  aria-selected="true">折线视图</button>
+          <button type="button" data-view="calendar" role="tab"
+                  aria-selected="false">日历视图</button>
+        </div>
+        <details class="device-picker" id="devicePicker">
+          <summary id="deviceSummary">全部设备</summary>
+          <div class="device-panel" id="devicePanel"></div>
+        </details>
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="统计范围">
+      <div class="tabs" role="tablist" aria-label="统计粒度">
+        <button type="button" data-granularity="day" role="tab">日</button>
+        <button type="button" data-granularity="month" role="tab">月</button>
+        <button type="button" data-granularity="year" role="tab">年</button>
+      </div>
+      <div class="period-navigation">
+        <button type="button" class="nav-button" id="previousPeriod" aria-label="上一周期">‹</button>
+        <strong id="periodTitle">正在加载…</strong>
+        <button type="button" class="nav-button" id="nextPeriod" aria-label="下一周期">›</button>
+      </div>
+      <div class="period-total" id="periodTotal">0 字</div>
+    </section>
+
+    <div class="notice" id="notice" role="status" hidden>
+      暂时无法读取统计数据。输入法和输入统计仍会正常运行。
+    </div>
+
+    <section class="card view-panel" data-view-panel="line">
+      <div class="section-heading">
+        <h2>输入趋势</h2>
+        <span>周期输入字数</span>
+      </div>
+      <div class="chart" id="lineChart" role="img" aria-label="输入字数折线图"></div>
+    </section>
+
+    <section class="card view-panel" data-view-panel="calendar" hidden>
+      <div class="section-heading">
+        <h2>周期统计</h2>
+        <div class="heat-legend" aria-label="热力颜色图例">
+          <span>少</span><i></i><i></i><i></i><i></i><i></i><span>多</span>
+        </div>
+      </div>
+      <div class="calendar" id="calendar"></div>
+    </section>
+  </main>
+</body>
+</html>

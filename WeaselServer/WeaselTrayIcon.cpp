@@ -42,8 +42,8 @@ void WeaselTrayIcon::CustomizeMenu(HMENU hMenu) {
   } else if (summary.status == weasel::stats::SummaryStatus::kDisabled) {
     label = L"今日统计：已关闭";
   }
-  InsertMenuW(hMenu, 0, MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED,
-              0, label.c_str());
+  InsertMenuW(hMenu, 0, MF_BYPOSITION | MF_STRING,
+              ID_WEASELTRAY_STATS_SUMMARY, label.c_str());
   InsertMenuW(hMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
 }
 
@@ -59,6 +59,11 @@ void WeaselTrayIcon::ShowStatisticsFailure() {
 
 void WeaselTrayIcon::ShowStatisticsSyncFailure() {
   ShowBalloon(L"输入统计同步失败，输入和 Rime 用户数据同步不受影响。",
+              get_weasel_ime_name().c_str(), NIIF_WARNING);
+}
+
+void WeaselTrayIcon::ShowStatisticsViewFailure() {
+  ShowBalloon(L"无法打开输入统计视图，输入统计仍会继续运行。",
               get_weasel_ime_name().c_str(), NIIF_WARNING);
 }
 

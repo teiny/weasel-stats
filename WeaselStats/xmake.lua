@@ -2,7 +2,13 @@ target("WeaselStats")
   set_kind("binary")
   add_files("./*.cpp")
   add_rules("add_rcfiles", "subwin")
-  add_links("kernel32", "advapi32")
+  add_includedirs("$(projectdir)/deps/Microsoft.Web.WebView2.1.0.4191.47/build/native/include")
+  if is_arch("x86") then
+    add_linkdirs("$(projectdir)/deps/Microsoft.Web.WebView2.1.0.4191.47/build/native/x86")
+  else
+    add_linkdirs("$(projectdir)/deps/Microsoft.Web.WebView2.1.0.4191.47/build/native/x64")
+  end
+  add_links("kernel32", "advapi32", "ole32", "version", "WebView2LoaderStatic")
 
   add_ldflags("/DEBUG /OPT:REF /OPT:ICF /LARGEADDRESSAWARE /ERRORREPORT:QUEUE")
   before_build(function(target)

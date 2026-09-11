@@ -1,0 +1,6 @@
+#pragma once
+
+#define IDR_STATS_INDEX_HTML 500
+#define IDR_STATS_STYLES_CSS 501
+#define IDR_STATS_APP_JS 502
+#define IDR_STATS_ECHARTS_JS 503

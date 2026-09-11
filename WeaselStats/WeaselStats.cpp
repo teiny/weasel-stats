@@ -7,6 +7,7 @@
 #include <WeaselStatsProtocol.h>
 
 #include "StatsDatabase.h"
+#include "StatsView.h"
 #include "WinSqlite.h"
 
 namespace fs = std::filesystem;
@@ -27,6 +28,16 @@ std::wstring MutexName() {
   DWORD session_id = 0;
   ProcessIdToSessionId(GetCurrentProcessId(), &session_id);
   return L"Local\\WeaselStats-" + std::to_wstring(session_id);
+}
+
+bool IsViewMode(PWSTR command_line) {
+  std::wstring_view arguments = command_line ? command_line : L"";
+  const auto first = arguments.find_first_not_of(L" \t\r\n");
+  if (first == std::wstring_view::npos) {
+    return false;
+  }
+  const auto last = arguments.find_last_not_of(L" \t\r\n");
+  return arguments.substr(first, last - first + 1) == L"--view";
 }
 
 fs::path UserDataDirectory() {
@@ -163,7 +174,17 @@ int RunPipeServer(weasel::stats::StatsDatabase& database) {
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE instance,
+                    HINSTANCE,
+                    PWSTR command_line,
+                    int) {
+  if (IsViewMode(command_line)) {
+    const fs::path data_directory = UserDataDirectory();
+    return data_directory.empty()
+               ? 1
+               : weasel::stats::RunStatsView(instance, data_directory);
+  }
+
   SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 
   HANDLE mutex = CreateMutexW(nullptr, TRUE, MutexName().c_str());

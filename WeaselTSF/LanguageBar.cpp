@@ -48,7 +48,7 @@ static std::wstring GetStatisticsMenuLabel() {
 static void PrependStatisticsMenu(HMENU menu) {
   const std::wstring label = GetStatisticsMenuLabel();
   InsertMenuW(menu, 0,
-              MF_BYPOSITION | MF_STRING | MF_DISABLED | MF_GRAYED,
+              MF_BYPOSITION | MF_STRING,
               ID_WEASELTRAY_STATS_SUMMARY, label.c_str());
   InsertMenuW(menu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
 }
@@ -229,7 +229,7 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click,
 
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
   const std::wstring label = GetStatisticsMenuLabel();
-  pMenu->AddMenuItem(ID_WEASELTRAY_STATS_SUMMARY, TF_LBMENUF_GRAYED, NULL,
+  pMenu->AddMenuItem(ID_WEASELTRAY_STATS_SUMMARY, 0, NULL,
                      NULL, label.c_str(), static_cast<ULONG>(label.size()),
                      NULL);
   pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, NULL, NULL, NULL, 0, NULL);

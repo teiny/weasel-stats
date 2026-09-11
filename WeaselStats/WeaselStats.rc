@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include "../include/resource.h"
+#include "StatsResources.h"
 
 #define STRZ2(x) #x
 #define STRZ(x) STRZ2(x)
@@ -128,3 +129,11 @@ END
 
 // Keep the lowest icon resource ID consistent with WeaselServer.
 IDI_WEASEL ICON "..\\resource\\weasel.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+// Offline statistics view assets
+
+IDR_STATS_INDEX_HTML RCDATA "assets\\index.html"
+IDR_STATS_STYLES_CSS RCDATA "assets\\styles.css"
+IDR_STATS_APP_JS RCDATA "assets\\app.js"
+IDR_STATS_ECHARTS_JS RCDATA "..\\deps\\echarts\\6.1.0\\echarts.min.js"

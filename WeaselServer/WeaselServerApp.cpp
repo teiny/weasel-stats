@@ -96,6 +96,16 @@ void WeaselServerApp::SetupMenuHandlers() {
   m_server.AddMenuHandler(
       ID_WEASELTRAY_SYNC,
       std::bind(execute, dir / L"WeaselDeployer.exe", std::wstring(L"/sync")));
+  m_server.AddMenuHandler(ID_WEASELTRAY_STATS_SUMMARY, [this, dir]() {
+    try {
+      if (execute(dir / L"WeaselStats.exe", L"--view")) {
+        return true;
+      }
+    } catch (...) {
+    }
+    tray_icon.ShowStatisticsViewFailure();
+    return false;
+  });
   m_server.AddMenuHandler(ID_WEASELTRAY_WIKI,
                           std::bind(open, L"https://rime.im/docs/"));
   m_server.AddMenuHandler(ID_WEASELTRAY_HOMEPAGE,
