@@ -31,6 +31,68 @@ function Get-VerifiedFile {
   Move-Item -LiteralPath $temporary -Destination $Path
 }
 
+$boostVersion = "1.84.0"
+$boostArchiveName = "boost_1_84_0.7z"
+$boostRoot = Join-Path $DestinationRoot "boost_1_84_0"
+$boostHeader = Join-Path $boostRoot "boost\version.hpp"
+if (!(Test-Path -LiteralPath $boostHeader)) {
+  if (Test-Path -LiteralPath $boostRoot) {
+    throw "Incomplete Boost dependency directory: $boostRoot"
+  }
+
+  $sevenZip = Join-Path $PSScriptRoot "..\output\7z.exe"
+  if (!(Test-Path -LiteralPath $sevenZip)) {
+    throw "7-Zip is required to extract Boost: $sevenZip"
+  }
+
+  $boostArchive = Join-Path $DestinationRoot "downloads\$boostArchiveName"
+  Get-VerifiedFile `
+    -Uri "https://archives.boost.io/release/$boostVersion/source/$boostArchiveName" `
+    -Path $boostArchive `
+    -Sha256 "81A4D10075731966477276C47324ECD9CAC02DA49899D36C48EBA66E40014F25"
+
+  $extractRoot = Join-Path $DestinationRoot (
+    ".boost-extract-" + [guid]::NewGuid().ToString("N"))
+  try {
+    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+    & $sevenZip x $boostArchive "-o$extractRoot" -y | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to extract Boost archive: $boostArchive"
+    }
+    $extractedBoostRoot = Join-Path $extractRoot "boost_1_84_0"
+    if (!(Test-Path -LiteralPath (
+          Join-Path $extractedBoostRoot "boost\version.hpp"))) {
+      throw "Boost archive does not contain the expected directory"
+    }
+    New-Item -ItemType Directory -Force -Path $DestinationRoot | Out-Null
+    Move-Item -LiteralPath $extractedBoostRoot -Destination $boostRoot
+  } finally {
+    if (Test-Path -LiteralPath $extractRoot) {
+      Remove-Item -LiteralPath $extractRoot -Recurse -Force
+    }
+  }
+}
+
+$boostMsvcToolset = Join-Path $boostRoot "tools\build\src\tools\msvc.jam"
+$legacyMsvcVersionCheck = 'if [ MATCH "(14.3)" : $(version) ]'
+$compatibleMsvcVersionCheck = 'if [ MATCH "(14.[34])" : $(version) ]'
+if (!(Test-Path -LiteralPath $boostMsvcToolset)) {
+  throw "Boost.Build MSVC toolset file is missing: $boostMsvcToolset"
+}
+# Boost 1.84 predates MSVC 14.4x and otherwise derives vcvarsall.bat from
+# the compiler bin directory. MSVC 14.3x and 14.4x share the VS 2022 layout.
+$boostMsvcToolsetText = [IO.File]::ReadAllText($boostMsvcToolset)
+if ($boostMsvcToolsetText.Contains($legacyMsvcVersionCheck)) {
+  $boostMsvcToolsetText = $boostMsvcToolsetText.Replace(
+    $legacyMsvcVersionCheck, $compatibleMsvcVersionCheck)
+  [IO.File]::WriteAllText(
+    $boostMsvcToolset,
+    $boostMsvcToolsetText,
+    [Text.UTF8Encoding]::new($false))
+} elseif (!$boostMsvcToolsetText.Contains($compatibleMsvcVersionCheck)) {
+  throw "Unsupported Boost.Build MSVC toolset format: $boostMsvcToolset"
+}
+
 $webViewVersion = "1.0.4191.47"
 $webViewRoot = Join-Path $DestinationRoot "Microsoft.Web.WebView2.$webViewVersion"
 $webViewHeader = Join-Path $webViewRoot "build\native\include\WebView2.h"
