@@ -402,7 +402,7 @@ bool StatsReport::BuildJson(const ReportQuery& query,
         result.available = false;
       } else {
         schema_version = sqlite_.column_int64(statement.get(), 0);
-        result.available = schema_version == 2;
+        result.available = schema_version == 2 || schema_version == 3;
       }
     }
 
