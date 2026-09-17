@@ -126,26 +126,28 @@ ECharts 只在构建阶段下载，最终运行时使用嵌入的离线资源。
 3. 编译 Boost Release x86/x64 静态库；如需使用已有 Boost，可分别通过 `WEASEL_PATCH_BOOST_X64`、`WEASEL_PATCH_BOOST_X86` 环境变量指定源码目录。
 4. 获取缺失的 librime x86/x64 开发文件，且不会停止正在运行的已安装小狼毫服务。
 5. 根据 `build.bat` 的版本号生成 `weasel.props`。
-6. 编译 Release x64 `WeaselStats.exe`。
+6. 编译 Release x64 `WeaselStats.exe` 和 `WeaselServer.exe`。
 7. 编译 Release x64 `weaselx64.dll` 和 Release Win32 `weasel.dll`。
-8. 校验三个构建物的 PE 固定文件版本完全一致，并将它们和一键部署脚本打包为：
+8. 校验四个构建物的 PE 固定文件版本完全一致，使用构建分钟计算 CRC32 作为 8 位批次版本，为四个文件记录完整 SHA-256，并将它们、构建清单和一键部署脚本打包为：
 
 ```text
-output\weasel-input-statistics-patch-<版本>.zip
+output\weasel-input-statistics-patch-<基础版本>-<8位批次版本>.zip
 ```
 
-ZIP 根目录只包含 `WeaselStats.exe`、`weasel.dll`、`weaselx64.dll` 和 `deploy_stats_patch.cmd`。编译或校验失败时不会生成或覆盖最终 ZIP。
+ZIP 根目录只包含 `WeaselStats.exe`、`WeaselServer.exe`、`weasel.dll`、`weaselx64.dll`、`weasel-stats-patch-manifest.json` 和 `deploy_stats_patch.cmd`。编译或校验失败时不会生成或覆盖最终 ZIP。
 
 ## 增量补丁部署
 
-源码根目录提供 `deploy_stats_patch.cmd`。一键编译脚本会将它与三个构建物一起放入增量补丁 ZIP，解压后的目录包含：
+源码根目录提供 `deploy_stats_patch.cmd`。一键编译脚本会将它与四个构建物和构建清单一起放入增量补丁 ZIP，解压后的目录包含：
 
 - `WeaselStats.exe`
+- `WeaselServer.exe`
 - `weasel.dll`
 - `weaselx64.dll`
+- `weasel-stats-patch-manifest.json`
 - `deploy_stats_patch.cmd`
 
-将一键部署脚本与三个补丁文件放在同一目录，双击 `deploy_stats_patch.cmd`。脚本会申请管理员权限，定位小狼毫安装目录，执行版本检查、原文件备份、替换、二进制校验、失败回滚和服务重启。
+将一键部署脚本、构建清单与四个补丁文件放在同一目录，双击 `deploy_stats_patch.cmd`。脚本会申请管理员权限，定位小狼毫安装目录，验证基础版本、8 位批次版本和四个文件的 SHA-256，然后执行原文件备份、替换、二进制校验、失败回滚和服务重启。新版 Server 无法启动时同样会回滚。
 
 已经运行的应用程序可能仍持有旧版 TSF DLL。部署成功后应重启相关应用；需要让所有进程统一加载新版本时，请注销 Windows 后重新登录。
 

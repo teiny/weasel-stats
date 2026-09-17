@@ -1,5 +1,6 @@
 #include <Windows.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -17,6 +18,43 @@ using weasel::stats::Response;
 using weasel::stats::ResponseStatus;
 
 namespace {
+
+void WriteStartupLog(const char* stage,
+                     DWORD win32_error = ERROR_SUCCESS) noexcept {
+  wchar_t temp_directory[MAX_PATH] = {};
+  const DWORD length = GetTempPathW(_countof(temp_directory), temp_directory);
+  if (!length || length >= _countof(temp_directory)) {
+    return;
+  }
+
+  constexpr wchar_t kLogFileName[] = L"WeaselStats-startup.log";
+  if (length + _countof(kLogFileName) > _countof(temp_directory)) {
+    return;
+  }
+  memcpy(temp_directory + length, kLogFileName, sizeof(kLogFileName));
+  HANDLE file = CreateFileW(temp_directory, FILE_APPEND_DATA,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                FILE_SHARE_DELETE,
+                            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                            nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return;
+  }
+
+  SYSTEMTIME time{};
+  GetLocalTime(&time);
+  char line[256] = {};
+  const int line_length = sprintf_s(
+      line, "%04u-%02u-%02u %02u:%02u:%02u.%03u pid=%lu stage=%s error=%lu\r\n",
+      time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+      time.wSecond, time.wMilliseconds, GetCurrentProcessId(), stage,
+      win32_error);
+  if (line_length > 0) {
+    DWORD written = 0;
+    WriteFile(file, line, static_cast<DWORD>(line_length), &written, nullptr);
+  }
+  CloseHandle(file);
+}
 
 std::wstring PipeName() {
   DWORD session_id = 0;
@@ -132,6 +170,7 @@ bool HandleRequest(weasel::stats::StatsDatabase& database,
       return true;
     case MessageType::kShutdown:
       response.status = ResponseStatus::kOk;
+      WriteStartupLog("shutdown_request_received");
       stop = true;
       return true;
     default:
@@ -149,6 +188,7 @@ int RunPipeServer(weasel::stats::StatsDatabase& database) {
                              PIPE_REJECT_REMOTE_CLIENTS,
                          1, sizeof(Response), sizeof(Request), 0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
+      WriteStartupLog("pipe_create_failed", GetLastError());
       return 1;
     }
 
@@ -179,24 +219,36 @@ int WINAPI wWinMain(HINSTANCE instance,
                     PWSTR command_line,
                     int) {
   if (IsViewMode(command_line)) {
+    WriteStartupLog("view_mode_begin");
     const fs::path data_directory = UserDataDirectory();
-    return data_directory.empty()
-               ? 1
-               : weasel::stats::RunStatsView(instance, data_directory);
+    if (data_directory.empty()) {
+      WriteStartupLog("view_user_data_directory_failed");
+      return 1;
+    }
+    const int result = weasel::stats::RunStatsView(instance, data_directory);
+    WriteStartupLog("view_mode_end", static_cast<DWORD>(result));
+    return result;
   }
 
-  SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+  WriteStartupLog("service_mode_begin");
+  if (!SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS)) {
+    WriteStartupLog("set_priority_failed", GetLastError());
+  }
 
   HANDLE mutex = CreateMutexW(nullptr, TRUE, MutexName().c_str());
-  if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
-    if (mutex) {
-      CloseHandle(mutex);
-    }
+  if (!mutex) {
+    WriteStartupLog("mutex_create_failed", GetLastError());
+    return 1;
+  }
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    WriteStartupLog("mutex_already_exists");
+    CloseHandle(mutex);
     return 0;
   }
 
   const fs::path data_directory = UserDataDirectory();
   if (data_directory.empty()) {
+    WriteStartupLog("user_data_directory_failed");
     CloseHandle(mutex);
     return 1;
   }
@@ -204,18 +256,28 @@ int WINAPI wWinMain(HINSTANCE instance,
   int result = 1;
   try {
     fs::create_directories(data_directory);
+    WriteStartupLog("data_directory_ready");
     weasel::stats::WinSqlite sqlite;
     if (sqlite.Load()) {
+      WriteStartupLog("sqlite_loaded");
       weasel::stats::StatsDatabase database(sqlite);
       if (database.Open(data_directory / L"weasel-input-statistics.sqlite3")) {
+        WriteStartupLog("database_opened");
+        WriteStartupLog("pipe_server_begin");
         result = RunPipeServer(database);
+      } else {
+        WriteStartupLog("database_open_failed");
       }
+    } else {
+      WriteStartupLog("sqlite_load_failed", GetLastError());
     }
   } catch (...) {
+    WriteStartupLog("service_exception");
     result = 1;
   }
 
   ReleaseMutex(mutex);
   CloseHandle(mutex);
+  WriteStartupLog("service_mode_end", static_cast<DWORD>(result));
   return result;
 }

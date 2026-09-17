@@ -27,9 +27,13 @@ echo.
 
 call :require_file "%PATCH_DIR%WeaselStats.exe"
 if errorlevel 1 goto :failed_before_stop
+call :require_file "%PATCH_DIR%WeaselServer.exe"
+if errorlevel 1 goto :failed_before_stop
 call :require_file "%PATCH_DIR%weasel.dll"
 if errorlevel 1 goto :failed_before_stop
 call :require_file "%PATCH_DIR%weaselx64.dll"
+if errorlevel 1 goto :failed_before_stop
+call :require_file "%PATCH_DIR%weasel-stats-patch-manifest.json"
 if errorlevel 1 goto :failed_before_stop
 
 set "WEASEL_ROOT="
@@ -82,11 +86,13 @@ set "VERSION_INSTALLED_STATS=%WEASEL_ROOT%\WeaselStats.exe"
 set "VERSION_INSTALLED_TSF32=%WEASEL_ROOT%\weasel.dll"
 set "VERSION_INSTALLED_TSF64=%WEASEL_ROOT%\weaselx64.dll"
 set "VERSION_PATCH_STATS=%PATCH_DIR%WeaselStats.exe"
+set "VERSION_PATCH_SERVER=%PATCH_DIR%WeaselServer.exe"
 set "VERSION_PATCH_TSF32=%PATCH_DIR%weasel.dll"
 set "VERSION_PATCH_TSF64=%PATCH_DIR%weaselx64.dll"
+set "PATCH_MANIFEST=%PATCH_DIR%weasel-stats-patch-manifest.json"
 echo 正在检查补丁版本一致性...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference = 'Stop'; function Get-NumericVersion([string] $path) { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path); $version = [Version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart); if ($version.ToString() -eq '0.0.0.0') { throw ('文件缺少有效版本信息：{0}' -f $path) }; return $version }; try { $base = Get-NumericVersion $env:VERSION_BASE; $installedFiles = @($env:VERSION_INSTALLED_STATS, $env:VERSION_INSTALLED_TSF32, $env:VERSION_INSTALLED_TSF64); foreach ($path in $installedFiles) { $version = Get-NumericVersion $path; if ($version -ne $base) { throw ('已安装文件版本不一致：{0} 是 {1}，原程序是 {2}' -f $path, $version, $base) } }; $patchFiles = @($env:VERSION_PATCH_STATS, $env:VERSION_PATCH_TSF32, $env:VERSION_PATCH_TSF64); foreach ($path in $patchFiles) { $version = Get-NumericVersion $path; if ($version -ne $base) { throw ('补丁版本不匹配：{0} 是 {1}，原程序是 {2}' -f $path, $version, $base) } }; Write-Host ('版本一致性检查通过：{0}' -f $base); exit 0 } catch { Write-Host ('[失败] {0}' -f $_.Exception.Message); exit 1 }"
+  "$ErrorActionPreference = 'Stop'; function Get-NumericVersion([string] $path) { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path); $version = [Version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart); if ($version.ToString() -eq '0.0.0.0') { throw ('文件缺少有效版本信息：{0}' -f $path) }; return $version }; function Get-Sha256Hex([string] $path) { $stream = [IO.File]::OpenRead($path); $sha = [Security.Cryptography.SHA256]::Create(); try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') } finally { $sha.Dispose(); $stream.Dispose() } }; function Get-Crc32([string] $value) { [uint32]$crc = [uint32]::MaxValue; foreach ($byte in [Text.Encoding]::UTF8.GetBytes($value)) { $crc = [uint32]($crc -bxor [uint32]$byte); for ($bit = 0; $bit -lt 8; ++$bit) { if (($crc -band 1) -ne 0) { $crc = [uint32](($crc -shr 1) -bxor 3988292384L) } else { $crc = [uint32]($crc -shr 1) } } }; return ('{0:X8}' -f ([uint32]($crc -bxor [uint32]::MaxValue))) }; try { $manifest = Get-Content -LiteralPath $env:PATCH_MANIFEST -Raw | ConvertFrom-Json; if ($manifest.schemaVersion -ne 1) { throw ('不支持的构建清单版本：{0}' -f $manifest.schemaVersion) }; $buildMinute = [string]$manifest.buildMinute; $buildVersion = [string]$manifest.buildVersion; if ($buildMinute -notmatch '^\d{12}$' -or $buildVersion -notmatch '^[0-9A-F]{8}$') { throw '构建清单中的分钟时间或批次版本格式无效' }; $calculatedVersion = Get-Crc32 $buildMinute; if ($calculatedVersion -cne $buildVersion) { throw ('补丁批次版本校验失败：清单为 {0}，计算结果为 {1}' -f $buildVersion, $calculatedVersion) }; $base = Get-NumericVersion $env:VERSION_BASE; if ([string]$manifest.baseVersion -ne $base.ToString()) { throw ('构建清单基础版本不匹配：{0}，已安装版本为 {1}' -f $manifest.baseVersion, $base) }; $installedFiles = @($env:VERSION_INSTALLED_STATS, $env:VERSION_INSTALLED_TSF32, $env:VERSION_INSTALLED_TSF64); foreach ($path in $installedFiles) { $version = Get-NumericVersion $path; if ($version -ne $base) { throw ('已安装文件版本不一致：{0} 是 {1}，原程序是 {2}' -f $path, $version, $base) } }; $patchFiles = @(@{ Path = $env:VERSION_PATCH_STATS; Name = 'WeaselStats.exe' }, @{ Path = $env:VERSION_PATCH_SERVER; Name = 'WeaselServer.exe' }, @{ Path = $env:VERSION_PATCH_TSF32; Name = 'weasel.dll' }, @{ Path = $env:VERSION_PATCH_TSF64; Name = 'weaselx64.dll' }); foreach ($item in $patchFiles) { $version = Get-NumericVersion $item.Path; if ($version -ne $base) { throw ('补丁版本不匹配：{0} 是 {1}，原程序是 {2}' -f $item.Path, $version, $base) }; $property = $manifest.files.PSObject.Properties[$item.Name]; if (!$property) { throw ('构建清单缺少文件：{0}' -f $item.Name) }; $actualHash = Get-Sha256Hex $item.Path; if ($actualHash -cne [string]$property.Value) { throw ('补丁文件不属于批次 {0}：{1}' -f $buildVersion, $item.Name) } }; Write-Host ('版本与构建批次检查通过：基础版本 {0}，批次 {1}' -f $base, $buildVersion); exit 0 } catch { Write-Host ('[失败] {0}' -f $_.Exception.Message); exit 1 }"
 if errorlevel 1 goto :failed_before_stop
 
 echo 安装目录：%WEASEL_ROOT%
@@ -120,6 +126,8 @@ if errorlevel 1 (
 )
 
 echo 正在备份原文件...
+copy /y "%WEASEL_ROOT%\WeaselServer.exe" "%BACKUP_DIR%\WeaselServer.exe" >nul
+if errorlevel 1 goto :backup_failed
 copy /y "%WEASEL_ROOT%\WeaselStats.exe" "%BACKUP_DIR%\WeaselStats.exe" >nul
 if errorlevel 1 goto :backup_failed
 copy /y "%WEASEL_ROOT%\weasel.dll" "%BACKUP_DIR%\weasel.dll" >nul
@@ -131,7 +139,9 @@ if errorlevel 1 goto :backup_failed
 copy /y "%TSF64_TARGET%" "%BACKUP_DIR%\registered-weasel64.dll" >nul
 if errorlevel 1 goto :backup_failed
 
-echo 正在部署三个补丁文件到实际安装和 TSF 注册位置...
+echo 正在部署四个补丁文件到实际安装和 TSF 注册位置...
+call :replace_file "%PATCH_DIR%WeaselServer.exe" "%WEASEL_ROOT%\WeaselServer.exe"
+if errorlevel 1 goto :deploy_failed
 call :replace_file "%PATCH_DIR%WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe"
 if errorlevel 1 goto :deploy_failed
 call :replace_file "%PATCH_DIR%weasel.dll" "%WEASEL_ROOT%\weasel.dll"
@@ -144,6 +154,8 @@ call :replace_file "%PATCH_DIR%weaselx64.dll" "%TSF64_TARGET%"
 if errorlevel 1 goto :deploy_failed
 
 echo 正在校验部署结果...
+fc /b "%PATCH_DIR%WeaselServer.exe" "%WEASEL_ROOT%\WeaselServer.exe" >nul
+if errorlevel 1 goto :verify_failed
 fc /b "%PATCH_DIR%WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul
 if errorlevel 1 goto :verify_failed
 fc /b "%PATCH_DIR%weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul
@@ -155,16 +167,15 @@ if errorlevel 1 goto :verify_failed
 fc /b "%PATCH_DIR%weaselx64.dll" "%TSF64_TARGET%" >nul
 if errorlevel 1 goto :verify_failed
 
-rmdir /s /q "%BACKUP_DIR%" >nul 2>&1
 call :start_server
 if errorlevel 1 (
-  echo [警告] 补丁已经部署，但小狼毫服务未能自动启动。
-  echo 请手动运行：%WEASEL_SERVER%
-  goto :failed_after_deploy
+  echo [失败] 新版小狼毫服务未能启动，正在回滚...
+  goto :rollback
 )
+rmdir /s /q "%BACKUP_DIR%" >nul 2>&1
 
 echo.
-echo [成功] 三个输入统计补丁文件已部署到安装目录和 TSF 注册位置，并校验通过。
+echo [成功] 四个输入统计补丁文件已部署到安装目录和 TSF 注册位置，并校验通过。
 echo 已重新启动小狼毫服务。
 echo 请重启所有正在运行的应用，或注销后重新登录。
 echo 完成后应用才会加载新的 TSF DLL。
@@ -185,11 +196,14 @@ goto :rollback
 echo [失败] 部署后的文件校验不一致，正在回滚...
 
 :rollback
+call :replace_file "%BACKUP_DIR%\WeaselServer.exe" "%WEASEL_ROOT%\WeaselServer.exe" >nul 2>&1
 call :replace_file "%BACKUP_DIR%\WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul 2>&1
 call :replace_file "%BACKUP_DIR%\weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul 2>&1
 call :replace_file "%BACKUP_DIR%\weaselx64.dll" "%WEASEL_ROOT%\weaselx64.dll" >nul 2>&1
 call :replace_file "%BACKUP_DIR%\registered-weasel32.dll" "%TSF32_TARGET%" >nul 2>&1
 call :replace_file "%BACKUP_DIR%\registered-weasel64.dll" "%TSF64_TARGET%" >nul 2>&1
+fc /b "%BACKUP_DIR%\WeaselServer.exe" "%WEASEL_ROOT%\WeaselServer.exe" >nul
+if errorlevel 1 goto :rollback_failed
 fc /b "%BACKUP_DIR%\WeaselStats.exe" "%WEASEL_ROOT%\WeaselStats.exe" >nul
 if errorlevel 1 goto :rollback_failed
 fc /b "%BACKUP_DIR%\weasel.dll" "%WEASEL_ROOT%\weasel.dll" >nul
@@ -217,11 +231,6 @@ echo 部署未完成。
 echo.
 pause
 exit /b 1
-
-:failed_after_deploy
-echo.
-pause
-exit /b 2
 
 :require_file
 if exist "%~1" exit /b 0
