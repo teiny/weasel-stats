@@ -150,8 +150,9 @@ bool StatsDatabase::Open(const std::filesystem::path& path) {
   sqlite_.busy_timeout(database_, 1000);
   sqlite3_int64 schema_version = 0;
   if (!ReadInteger(sqlite_, database_, "PRAGMA user_version;", schema_version) ||
-      schema_version < 0 || schema_version > 2 ||
+      schema_version < 0 || schema_version > 3 ||
       !Execute("PRAGMA journal_mode=WAL;") ||
+      !Execute("PRAGMA secure_delete=ON;") ||
       !Execute("PRAGMA synchronous=NORMAL;")) {
     return false;
   }
@@ -171,7 +172,11 @@ bool StatsDatabase::Open(const std::filesystem::path& path) {
     if (!MigrateSchema1()) {
       return false;
     }
-  } else if (!ValidateSchema2()) {
+  } else if (schema_version == 2) {
+    if (!MigrateSchema2()) {
+      return false;
+    }
+  } else if (!ValidateSchema3()) {
     return false;
   }
 
@@ -201,13 +206,7 @@ bool StatsDatabase::CreateSchema() {
       "revision INTEGER NOT NULL,"
       "PRIMARY KEY(device_id,generation_id,day));"
       "CREATE INDEX daily_totals_day ON daily_totals(day);"
-      "CREATE TABLE daily_terms("
-      "device_id TEXT NOT NULL,generation_id TEXT NOT NULL,"
-      "day INTEGER NOT NULL,term TEXT NOT NULL,count INTEGER NOT NULL,"
-      "revision INTEGER NOT NULL,"
-      "PRIMARY KEY(device_id,generation_id,day,term));"
-      "CREATE INDEX daily_terms_day_count ON daily_terms(day,count DESC);"
-      "PRAGMA user_version=2;");
+      "PRAGMA user_version=3;");
   if (!success || !Execute("COMMIT;")) {
     Execute("ROLLBACK;");
     return false;
@@ -223,7 +222,6 @@ bool StatsDatabase::MigrateSchema1() {
       "DROP INDEX IF EXISTS daily_totals_day;"
       "DROP INDEX IF EXISTS daily_terms_day_count;"
       "ALTER TABLE daily_totals RENAME TO daily_totals_schema1;"
-      "ALTER TABLE daily_terms RENAME TO daily_terms_schema1;"
       "CREATE TABLE daily_totals("
       "device_id TEXT NOT NULL,generation_id TEXT NOT NULL,"
       "day INTEGER NOT NULL,han_characters INTEGER NOT NULL,"
@@ -235,17 +233,8 @@ bool StatsDatabase::MigrateSchema1() {
       "SELECT device_id,'legacy',day,han_characters,english_words,commits,"
       "backspaces,deleted_ascii_letters,revision FROM daily_totals_schema1;"
       "CREATE INDEX daily_totals_day ON daily_totals(day);"
-      "CREATE TABLE daily_terms("
-      "device_id TEXT NOT NULL,generation_id TEXT NOT NULL,"
-      "day INTEGER NOT NULL,term TEXT NOT NULL,count INTEGER NOT NULL,"
-      "revision INTEGER NOT NULL,"
-      "PRIMARY KEY(device_id,generation_id,day,term));"
-      "INSERT INTO daily_terms "
-      "SELECT device_id,'legacy',day,term,count,revision "
-      "FROM daily_terms_schema1;"
-      "CREATE INDEX daily_terms_day_count ON daily_terms(day,count DESC);"
       "DROP TABLE daily_totals_schema1;"
-      "DROP TABLE daily_terms_schema1;"
+      "DROP TABLE IF EXISTS daily_terms;"
       "CREATE TABLE IF NOT EXISTS local_state("
       "key TEXT PRIMARY KEY,value TEXT NOT NULL);"
       "PRAGMA user_version=2;");
@@ -253,19 +242,36 @@ bool StatsDatabase::MigrateSchema1() {
     Execute("ROLLBACK;");
     return false;
   }
-  return ValidateSchema2();
+  return MigrateSchema2();
 }
 
-bool StatsDatabase::ValidateSchema2() {
+bool StatsDatabase::MigrateSchema2() {
+  if (!Execute("BEGIN IMMEDIATE;")) {
+    return false;
+  }
+  const bool success = Execute(
+      "DROP INDEX IF EXISTS daily_terms_day_count;"
+      "DROP TABLE IF EXISTS daily_terms;");
+  if (!success || !Execute("COMMIT;")) {
+    Execute("ROLLBACK;");
+    return false;
+  }
+  if (!Execute("PRAGMA wal_checkpoint(TRUNCATE);") || !Execute("VACUUM;") ||
+      !Execute("PRAGMA wal_checkpoint(TRUNCATE);") ||
+      !Execute("PRAGMA user_version=3;")) {
+    return false;
+  }
+  return ValidateSchema3();
+}
+
+bool StatsDatabase::ValidateSchema3() {
   return Execute(
       "SELECT key,value FROM meta LIMIT 0;"
       "SELECT key,value FROM local_state LIMIT 0;"
       "SELECT server_id,last_sequence FROM processed_sessions LIMIT 0;"
       "SELECT device_id,generation_id,day,han_characters,english_words,"
       "commits,backspaces,deleted_ascii_letters,revision "
-      "FROM daily_totals LIMIT 0;"
-      "SELECT device_id,generation_id,day,term,count,revision "
-      "FROM daily_terms LIMIT 0;");
+      "FROM daily_totals LIMIT 0;");
 }
 
 bool StatsDatabase::InitializeGeneration() {
@@ -392,34 +398,6 @@ bool StatsDatabase::UpdateDailyTotals(std::string_view device_id,
          sqlite_.step(update.get()) == SQLITE_DONE;
 }
 
-bool StatsDatabase::UpdateTerm(std::string_view device_id,
-                               std::uint32_t day,
-                               std::string_view text,
-                               std::uint64_t revision) {
-  Statement insert(
-      sqlite_, database_,
-      "INSERT OR IGNORE INTO daily_terms(device_id,generation_id,day,term,"
-      "count,revision) VALUES(?1,?2,?3,?4,0,0);");
-  if (!insert.get() || !BindText(sqlite_, insert.get(), 1, device_id) ||
-      !BindText(sqlite_, insert.get(), 2, generation_id_) ||
-      !BindInteger(sqlite_, insert.get(), 3, day) ||
-      !BindText(sqlite_, insert.get(), 4, text) ||
-      sqlite_.step(insert.get()) != SQLITE_DONE) {
-    return false;
-  }
-
-  Statement update(sqlite_, database_,
-                   "UPDATE daily_terms SET count=count+1,revision=?1 "
-                   "WHERE device_id=?2 AND generation_id=?3 AND day=?4 "
-                   "AND term=?5;");
-  return update.get() && BindInteger(sqlite_, update.get(), 1, revision) &&
-         BindText(sqlite_, update.get(), 2, device_id) &&
-         BindText(sqlite_, update.get(), 3, generation_id_) &&
-         BindInteger(sqlite_, update.get(), 4, day) &&
-         BindText(sqlite_, update.get(), 5, text) &&
-         sqlite_.step(update.get()) == SQLITE_DONE;
-}
-
 bool StatsDatabase::RecordCommit(std::string_view server_id,
                                  std::uint64_t sequence,
                                  std::string_view device_id,
@@ -436,7 +414,7 @@ bool StatsDatabase::RecordCommit(std::string_view server_id,
     if (!AdvanceRevision(revision) ||
         !UpdateDailyTotals(device_id, day, metrics.han_characters,
                            metrics.english_words, 1, 0, 0, revision) ||
-        !UpdateTerm(device_id, day, text, revision) || !Execute("COMMIT;")) {
+        !Execute("COMMIT;")) {
       Execute("ROLLBACK;");
       return false;
     }
@@ -518,29 +496,25 @@ bool StatsDatabase::ValidateSnapshot(const std::filesystem::path& path,
   std::string quick_check;
   bool valid =
       ReadInteger(sqlite_, snapshot, "PRAGMA user_version;", version) &&
-      (version == 1 || version == 2) &&
+      (version == 1 || version == 2 || version == 3) &&
       ReadText(sqlite_, snapshot, "PRAGMA quick_check;", quick_check) &&
       quick_check == "ok";
   if (valid) {
     const char* schema_check =
-        version == 2
+        version >= 2
             ? "SELECT device_id,generation_id,day,han_characters,"
               "english_words,commits,backspaces,deleted_ascii_letters,"
               "revision FROM daily_totals LIMIT 0;"
-              "SELECT device_id,generation_id,day,term,count,revision "
-              "FROM daily_terms LIMIT 0;"
             : "SELECT device_id,day,han_characters,english_words,commits,"
               "backspaces,deleted_ascii_letters,revision "
-              "FROM daily_totals LIMIT 0;"
-              "SELECT device_id,day,term,count,revision "
-              "FROM daily_terms LIMIT 0;";
+              "FROM daily_totals LIMIT 0;";
     valid = ExecuteSql(sqlite_, snapshot, schema_check);
   }
 
   sqlite3_int64 invalid_rows = 0;
   if (valid) {
     const char* row_check =
-        version == 2
+        version >= 2
             ? "SELECT "
               "(SELECT COUNT(*) FROM daily_totals WHERE "
               "typeof(device_id)<>'text' OR length(device_id)=0 OR "
@@ -552,14 +526,7 @@ bool StatsDatabase::ValidateSnapshot(const std::filesystem::path& path,
               "typeof(backspaces)<>'integer' OR backspaces<0 OR "
               "typeof(deleted_ascii_letters)<>'integer' OR "
               "deleted_ascii_letters<0 OR typeof(revision)<>'integer' OR "
-              "revision<0) + "
-              "(SELECT COUNT(*) FROM daily_terms WHERE "
-              "typeof(device_id)<>'text' OR length(device_id)=0 OR "
-              "typeof(generation_id)<>'text' OR length(generation_id)=0 OR "
-              "typeof(day)<>'integer' OR day<=0 OR typeof(term)<>'text' OR "
-              "length(term)=0 OR length(CAST(term AS BLOB))>=4096 OR "
-              "typeof(count)<>'integer' OR count<0 OR "
-              "typeof(revision)<>'integer' OR revision<0);"
+              "revision<0);"
             : "SELECT "
               "(SELECT COUNT(*) FROM daily_totals WHERE "
               "typeof(device_id)<>'text' OR length(device_id)=0 OR "
@@ -570,13 +537,7 @@ bool StatsDatabase::ValidateSnapshot(const std::filesystem::path& path,
               "typeof(backspaces)<>'integer' OR backspaces<0 OR "
               "typeof(deleted_ascii_letters)<>'integer' OR "
               "deleted_ascii_letters<0 OR typeof(revision)<>'integer' OR "
-              "revision<0) + "
-              "(SELECT COUNT(*) FROM daily_terms WHERE "
-              "typeof(device_id)<>'text' OR length(device_id)=0 OR "
-              "typeof(day)<>'integer' OR day<=0 OR typeof(term)<>'text' OR "
-              "length(term)=0 OR length(CAST(term AS BLOB))>=4096 OR "
-              "typeof(count)<>'integer' OR count<0 OR "
-              "typeof(revision)<>'integer' OR revision<0);";
+              "revision<0);";
     valid = ReadInteger(sqlite_, snapshot, row_check, invalid_rows) &&
             invalid_rows == 0;
   }
@@ -607,7 +568,7 @@ bool StatsDatabase::MergeSnapshot(const std::filesystem::path& path,
   }
 
   const char* totals_sql =
-      schema_version == 2
+      schema_version >= 2
           ? "INSERT OR REPLACE INTO main.daily_totals("
             "device_id,generation_id,day,han_characters,english_words,"
             "commits,backspaces,deleted_ascii_letters,revision) "
@@ -654,37 +615,11 @@ bool StatsDatabase::MergeSnapshot(const std::filesystem::path& path,
             "LEFT JOIN main.daily_totals AS dst ON "
             "dst.device_id=src.device_id AND dst.generation_id='legacy' "
             "AND dst.day=src.day;";
-  const char* terms_sql =
-      schema_version == 2
-          ? "INSERT OR REPLACE INTO main.daily_terms("
-            "device_id,generation_id,day,term,count,revision) "
-            "SELECT src.device_id,src.generation_id,src.day,src.term,"
-            "CASE WHEN dst.device_id IS NULL OR src.count>dst.count "
-            "THEN src.count ELSE dst.count END,"
-            "CASE WHEN dst.device_id IS NULL OR src.revision>dst.revision "
-            "THEN src.revision ELSE dst.revision END "
-            "FROM incoming.daily_terms AS src "
-            "LEFT JOIN main.daily_terms AS dst ON "
-            "dst.device_id=src.device_id AND "
-            "dst.generation_id=src.generation_id AND dst.day=src.day "
-            "AND dst.term=src.term;"
-          : "INSERT OR REPLACE INTO main.daily_terms("
-            "device_id,generation_id,day,term,count,revision) "
-            "SELECT src.device_id,'legacy',src.day,src.term,"
-            "CASE WHEN dst.device_id IS NULL OR src.count>dst.count "
-            "THEN src.count ELSE dst.count END,"
-            "CASE WHEN dst.device_id IS NULL OR src.revision>dst.revision "
-            "THEN src.revision ELSE dst.revision END "
-            "FROM incoming.daily_terms AS src "
-            "LEFT JOIN main.daily_terms AS dst ON "
-            "dst.device_id=src.device_id AND dst.generation_id='legacy' "
-            "AND dst.day=src.day AND dst.term=src.term;";
   const bool merged =
-      Execute(totals_sql) && Execute(terms_sql) &&
+      Execute(totals_sql) &&
       Execute(
           "UPDATE meta SET value=max("
-          "value,COALESCE((SELECT MAX(revision) FROM daily_totals),0),"
-          "COALESCE((SELECT MAX(revision) FROM daily_terms),0))+1 "
+          "value,COALESCE((SELECT MAX(revision) FROM daily_totals),0))+1 "
           "WHERE key='revision';") &&
       Execute("COMMIT;");
   if (!merged) {

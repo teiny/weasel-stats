@@ -4,6 +4,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $stream = [System.IO.File]::OpenRead($Path)
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "")
+  }
+  finally {
+    $sha256.Dispose()
+    $stream.Dispose()
+  }
+}
+
 function Get-VerifiedFile {
   param(
     [Parameter(Mandatory = $true)][string]$Uri,
@@ -12,7 +26,7 @@ function Get-VerifiedFile {
   )
 
   if (Test-Path -LiteralPath $Path) {
-    $existingHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
+    $existingHash = Get-Sha256Hex -Path $Path
     if ($existingHash -ieq $Sha256) {
       return
     }
@@ -22,7 +36,7 @@ function Get-VerifiedFile {
   $temporary = Join-Path ([System.IO.Path]::GetTempPath()) (
     "weasel-stats-" + [guid]::NewGuid().ToString("N") + ".download")
   Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temporary
-  $downloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $temporary).Hash
+  $downloadHash = Get-Sha256Hex -Path $temporary
   if ($downloadHash -ine $Sha256) {
     throw "Dependency hash verification failed: $Uri"
   }

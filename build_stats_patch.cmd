@@ -59,7 +59,7 @@ echo MSBuild：%MSBUILD%
 echo VS 开发环境：%VSDEVCMD%
 echo.
 
-echo [1/8] 准备 Boost、WebView2 和 ECharts 构建依赖...
+echo [1/9] 准备 Boost、WebView2 和 ECharts 构建依赖...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_ROOT%WeaselStats\fetch_dependencies.ps1" -DestinationRoot "%PROJECT_ROOT%deps"
 if errorlevel 1 (
   echo [失败] 构建依赖准备失败。
@@ -83,7 +83,7 @@ echo Boost x64：%BOOST_X64%
 echo Boost x86：%BOOST_X86%
 echo.
 
-echo [2/8] 编译 Boost 静态库 ^(Release x86/x64^)...
+echo [2/9] 编译 Boost 静态库 ^(Release x86/x64^)...
 call :build_boost_arch "%BOOST_X86%" 32
 if errorlevel 1 (
   echo [失败] Boost x86 静态库编译失败。
@@ -106,7 +106,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/8] 准备 librime x86/x64 开发文件...
+echo [3/9] 准备 librime x86/x64 开发文件...
 set "NEED_RIME=0"
 if not exist "%PROJECT_ROOT%include\rime_api.h" set "NEED_RIME=1"
 if not exist "%PROJECT_ROOT%lib\rime.lib" set "NEED_RIME=1"
@@ -131,7 +131,7 @@ if not exist "%PROJECT_ROOT%lib64\rime.lib" (
 )
 
 echo.
-echo [4/8] 生成项目版本属性...
+echo [4/9] 生成项目版本属性...
 if not defined VERSION_MAJOR for /f "tokens=2 delims==" %%V in ('findstr /b /c:"if not defined VERSION_MAJOR set VERSION_MAJOR=" "%PROJECT_ROOT%build.bat"') do set "VERSION_MAJOR=%%V"
 if not defined VERSION_MINOR for /f "tokens=2 delims==" %%V in ('findstr /b /c:"if not defined VERSION_MINOR set VERSION_MINOR=" "%PROJECT_ROOT%build.bat"') do set "VERSION_MINOR=%%V"
 if not defined VERSION_PATCH for /f "tokens=2 delims==" %%V in ('findstr /b /c:"if not defined VERSION_PATCH set VERSION_PATCH=" "%PROJECT_ROOT%build.bat"') do set "VERSION_PATCH=%%V"
@@ -160,7 +160,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/8] 编译 WeaselStats.exe ^(Release x64^)...
+echo [5/9] 编译 WeaselStats.exe ^(Release x64^)...
 "%MSBUILD%" "%PROJECT_ROOT%weasel.sln" /m /t:WeaselStats /p:Configuration=Release /p:Platform=x64 "/p:BOOST_ROOT=%BOOST_X64%" /v:minimal
 if errorlevel 1 (
   echo [失败] WeaselStats.exe 编译失败。
@@ -168,7 +168,15 @@ if errorlevel 1 (
 )
 
 echo.
-echo [6/8] 编译 weaselx64.dll ^(Release x64^)...
+echo [6/9] 编译 WeaselServer.exe ^(Release x64^)...
+"%MSBUILD%" "%PROJECT_ROOT%weasel.sln" /m /t:WeaselServer /p:Configuration=Release /p:Platform=x64 "/p:BOOST_ROOT=%BOOST_X64%" /v:minimal
+if errorlevel 1 (
+  echo [失败] WeaselServer.exe 编译失败。
+  goto :failed
+)
+
+echo.
+echo [7/9] 编译 weaselx64.dll ^(Release x64^)...
 "%MSBUILD%" "%PROJECT_ROOT%weasel.sln" /m /t:WeaselTSF /p:Configuration=Release /p:Platform=x64 "/p:BOOST_ROOT=%BOOST_X64%" /v:minimal
 if errorlevel 1 (
   echo [失败] weaselx64.dll 编译失败。
@@ -176,7 +184,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [7/8] 编译 weasel.dll ^(Release Win32^)...
+echo [8/9] 编译 weasel.dll ^(Release Win32^)...
 "%MSBUILD%" "%PROJECT_ROOT%weasel.sln" /m /t:WeaselTSF /p:Configuration=Release /p:Platform=Win32 "/p:BOOST_ROOT=%BOOST_X86%" /v:minimal
 if errorlevel 1 (
   echo [失败] weasel.dll 编译失败。
@@ -184,10 +192,15 @@ if errorlevel 1 (
 )
 
 set "BUILD_STATS=%PROJECT_ROOT%output\WeaselStats.exe"
+set "BUILD_SERVER=%PROJECT_ROOT%output\WeaselServer.exe"
 set "BUILD_TSF32=%PROJECT_ROOT%output\weasel.dll"
 set "BUILD_TSF64=%PROJECT_ROOT%output\weaselx64.dll"
 if not exist "%BUILD_STATS%" (
   echo [失败] 编译结束后找不到 WeaselStats.exe。
+  goto :failed
+)
+if not exist "%BUILD_SERVER%" (
+  echo [失败] 编译结束后找不到 WeaselServer.exe。
   goto :failed
 )
 if not exist "%BUILD_TSF32%" (
@@ -200,9 +213,10 @@ if not exist "%BUILD_TSF64%" (
 )
 
 echo.
-echo [8/8] 校验版本并生成 ZIP...
+echo [9/9] 校验版本、生成构建清单并生成 ZIP...
+set "PACKAGE_MANIFEST=%PROJECT_ROOT%output\weasel-stats-patch-manifest.json"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference = 'Stop'; function Get-Version([string] $path) { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path); $version = [Version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart); if ($version.ToString() -eq '0.0.0.0') { throw ('文件缺少有效版本：{0}' -f $path) }; return $version }; try { $files = @($env:BUILD_STATS, $env:BUILD_TSF32, $env:BUILD_TSF64); $expected = Get-Version $files[0]; foreach ($file in $files) { $actual = Get-Version $file; if ($actual -ne $expected) { throw ('构建物版本不一致：{0} 是 {1}，预期 {2}' -f $file, $actual, $expected) } }; Write-Host ('构建物版本一致：{0}' -f $expected); exit 0 } catch { Write-Host ('[失败] {0}' -f $_.Exception.Message); exit 1 }"
+  "$ErrorActionPreference = 'Stop'; function Get-Version([string] $path) { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path); $version = [Version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart); if ($version.ToString() -eq '0.0.0.0') { throw ('文件缺少有效版本：{0}' -f $path) }; return $version }; function Get-Sha256Hex([string] $path) { $stream = [IO.File]::OpenRead($path); $sha = [Security.Cryptography.SHA256]::Create(); try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') } finally { $sha.Dispose(); $stream.Dispose() } }; function Get-Crc32([string] $value) { [uint32]$crc = [uint32]::MaxValue; foreach ($byte in [Text.Encoding]::UTF8.GetBytes($value)) { $crc = [uint32]($crc -bxor [uint32]$byte); for ($bit = 0; $bit -lt 8; ++$bit) { if (($crc -band 1) -ne 0) { $crc = [uint32](($crc -shr 1) -bxor 3988292384L) } else { $crc = [uint32]($crc -shr 1) } } }; return ('{0:X8}' -f ([uint32]($crc -bxor [uint32]::MaxValue))) }; try { $files = @($env:BUILD_STATS, $env:BUILD_SERVER, $env:BUILD_TSF32, $env:BUILD_TSF64); $expected = Get-Version $files[0]; $hashes = [ordered]@{}; foreach ($file in $files) { $actual = Get-Version $file; if ($actual -ne $expected) { throw ('构建物版本不一致：{0} 是 {1}，预期 {2}' -f $file, $actual, $expected) }; $hashes[[IO.Path]::GetFileName($file)] = Get-Sha256Hex $file }; $buildMinute = (Get-Date).ToString('yyyyMMddHHmm'); $buildVersion = Get-Crc32 $buildMinute; $manifest = [ordered]@{ schemaVersion = 1; buildMinute = $buildMinute; buildVersion = $buildVersion; baseVersion = $expected.ToString(); files = $hashes }; $json = $manifest | ConvertTo-Json -Depth 3; [IO.File]::WriteAllText($env:PACKAGE_MANIFEST, $json, [Text.UTF8Encoding]::new($false)); Write-Host ('四个构建物版本一致：{0}，补丁批次版本：{1}' -f $expected, $buildVersion); exit 0 } catch { Write-Host ('[失败] {0}' -f $_.Exception.Message); exit 1 }"
 if errorlevel 1 goto :failed
 
 set "PATCH_VERSION="
@@ -211,12 +225,18 @@ if not defined PATCH_VERSION (
   echo [失败] 无法读取补丁版本。
   goto :failed
 )
+set "PATCH_BUILD_VERSION="
+for /f "delims=" %%V in ('powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$manifest = Get-Content -LiteralPath $env:PACKAGE_MANIFEST -Raw ^| ConvertFrom-Json; [string]$manifest.buildVersion"') do set "PATCH_BUILD_VERSION=%%V"
+if not defined PATCH_BUILD_VERSION (
+  echo [失败] 无法读取 8 位补丁批次版本。
+  goto :failed
+)
 
 set "PACKAGE_DEPLOY=%PROJECT_ROOT%deploy_stats_patch.cmd"
-set "PACKAGE_ZIP=%PROJECT_ROOT%output\weasel-input-statistics-patch-%PATCH_VERSION%.zip"
-set "PACKAGE_TEMP=%PROJECT_ROOT%output\weasel-input-statistics-patch-%PATCH_VERSION%.tmp-%RANDOM%-%RANDOM%.zip"
+set "PACKAGE_ZIP=%PROJECT_ROOT%output\weasel-input-statistics-patch-%PATCH_VERSION%-%PATCH_BUILD_VERSION%.zip"
+set "PACKAGE_TEMP=%PROJECT_ROOT%output\weasel-input-statistics-patch-%PATCH_VERSION%-%PATCH_BUILD_VERSION%.tmp-%RANDOM%-%RANDOM%.zip"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference = 'Stop'; try { $files = @($env:BUILD_STATS, $env:BUILD_TSF32, $env:BUILD_TSF64, $env:PACKAGE_DEPLOY); Compress-Archive -LiteralPath $files -DestinationPath $env:PACKAGE_TEMP -CompressionLevel Optimal -Force; Add-Type -AssemblyName System.IO.Compression.FileSystem; $archive = [System.IO.Compression.ZipFile]::OpenRead($env:PACKAGE_TEMP); try { $expected = @('WeaselStats.exe', 'weasel.dll', 'weaselx64.dll', 'deploy_stats_patch.cmd'); if ($archive.Entries.Count -ne $expected.Count) { throw ('ZIP 文件数量不正确：{0}' -f $archive.Entries.Count) }; foreach ($name in $expected) { $found = $false; foreach ($entry in $archive.Entries) { if ($entry.FullName -eq $name) { $found = $true; break } }; if (-not $found) { throw ('ZIP 缺少文件：{0}' -f $name) } } } finally { $archive.Dispose() }; exit 0 } catch { Write-Host ('[失败] 打包校验失败：{0}' -f $_.Exception.Message); exit 1 }"
+  "$ErrorActionPreference = 'Stop'; try { $files = @($env:BUILD_STATS, $env:BUILD_SERVER, $env:BUILD_TSF32, $env:BUILD_TSF64, $env:PACKAGE_MANIFEST, $env:PACKAGE_DEPLOY); Compress-Archive -LiteralPath $files -DestinationPath $env:PACKAGE_TEMP -CompressionLevel Optimal -Force; Add-Type -AssemblyName System.IO.Compression.FileSystem; $archive = [System.IO.Compression.ZipFile]::OpenRead($env:PACKAGE_TEMP); try { $expected = @('WeaselStats.exe', 'WeaselServer.exe', 'weasel.dll', 'weaselx64.dll', 'weasel-stats-patch-manifest.json', 'deploy_stats_patch.cmd'); if ($archive.Entries.Count -ne $expected.Count) { throw ('ZIP 文件数量不正确：{0}' -f $archive.Entries.Count) }; foreach ($name in $expected) { $found = $false; foreach ($entry in $archive.Entries) { if ($entry.FullName -eq $name) { $found = $true; break } }; if (-not $found) { throw ('ZIP 缺少文件：{0}' -f $name) } } } finally { $archive.Dispose() }; exit 0 } catch { Write-Host ('[失败] 打包校验失败：{0}' -f $_.Exception.Message); exit 1 }"
 if errorlevel 1 (
   if exist "%PACKAGE_TEMP%" del /f /q "%PACKAGE_TEMP%" >nul 2>&1
   goto :failed
@@ -230,12 +250,14 @@ if errorlevel 1 (
 )
 
 echo.
-echo [成功] 三个构建物已编译并完成打包。
+echo [成功] 四个构建物已编译、生成构建清单并完成打包。
 echo 输出文件：%PACKAGE_ZIP%
 echo ZIP 内容：
 echo   WeaselStats.exe
+echo   WeaselServer.exe
 echo   weasel.dll
 echo   weaselx64.dll
+echo   weasel-stats-patch-manifest.json
 echo   deploy_stats_patch.cmd
 echo.
 popd >nul

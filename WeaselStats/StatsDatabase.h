@@ -41,7 +41,8 @@ class StatsDatabase {
   bool Execute(const char* sql);
   bool CreateSchema();
   bool MigrateSchema1();
-  bool ValidateSchema2();
+  bool MigrateSchema2();
+  bool ValidateSchema3();
   bool InitializeGeneration();
   bool IsSyncInitialized(bool& initialized);
   bool SetSyncInitialized();
@@ -61,11 +62,6 @@ class StatsDatabase {
                          std::uint64_t backspaces,
                          std::uint64_t deleted_ascii_letters,
                          std::uint64_t revision);
-  bool UpdateTerm(std::string_view device_id,
-                  std::uint32_t day,
-                  std::string_view text,
-                  std::uint64_t revision);
-
   WinSqlite& sqlite_;
   sqlite3* database_ = nullptr;
   std::filesystem::path database_path_;
