@@ -60,44 +60,6 @@ std::wstring Utf8ToWide(std::string_view value) {
   return result;
 }
 
-int HexValue(wchar_t character) {
-  if (character >= L'0' && character <= L'9') {
-    return character - L'0';
-  }
-  if (character >= L'a' && character <= L'f') {
-    return character - L'a' + 10;
-  }
-  if (character >= L'A' && character <= L'F') {
-    return character - L'A' + 10;
-  }
-  return -1;
-}
-
-bool PercentDecode(std::wstring_view value, std::string& decoded) {
-  decoded.clear();
-  decoded.reserve(value.size());
-  for (std::size_t index = 0; index < value.size(); ++index) {
-    const wchar_t character = value[index];
-    if (character == L'%') {
-      if (index + 2 >= value.size()) {
-        return false;
-      }
-      const int high = HexValue(value[index + 1]);
-      const int low = HexValue(value[index + 2]);
-      if (high < 0 || low < 0) {
-        return false;
-      }
-      decoded.push_back(static_cast<char>((high << 4) | low));
-      index += 2;
-    } else if (character <= 0x7f) {
-      decoded.push_back(static_cast<char>(character));
-    } else {
-      return false;
-    }
-  }
-  return !decoded.empty();
-}
-
 bool ParseInteger(std::wstring_view value, int& parsed) {
   if (value.empty() || value.size() > 8) {
     return false;
@@ -129,7 +91,7 @@ bool ParseQuery(std::wstring_view message, ReportQuery& query) {
     }
     start = separator + 1;
   }
-  if (parts.size() != 4 || parts[0] != L"query") {
+  if (parts.size() != 3 || parts[0] != L"query") {
     return false;
   }
   if (parts[1] == L"day") {
@@ -145,29 +107,7 @@ bool ParseQuery(std::wstring_view message, ReportQuery& query) {
     return false;
   }
 
-  query.device_ids.clear();
-  if (parts[3] == L"all") {
-    return true;
-  }
-  std::size_t device_start = 0;
-  while (device_start <= parts[3].size()) {
-    const std::size_t separator = parts[3].find(L',', device_start);
-    const std::wstring_view encoded = parts[3].substr(
-        device_start,
-        separator == std::wstring_view::npos ? parts[3].size() - device_start
-                                             : separator - device_start);
-    std::string device;
-    if (!PercentDecode(encoded, device) || device.size() > 256) {
-      return false;
-    }
-    query.device_ids.push_back(std::move(device));
-    if (query.device_ids.size() > 32 ||
-        separator == std::wstring_view::npos) {
-      break;
-    }
-    device_start = separator + 1;
-  }
-  return !query.device_ids.empty() && query.device_ids.size() <= 32;
+  return true;
 }
 
 std::filesystem::path WebViewDataDirectory() {
@@ -569,10 +509,10 @@ class StatsViewWindow {
     if (!report_.BuildJson(query, json)) {
       json =
           "{\"type\":\"report\",\"available\":false,"
-          "\"granularity\":\"day\",\"anchor\":0,"
-          "\"previousAnchor\":0,\"nextAnchor\":0,"
-          "\"weekdayOffset\":0,\"title\":\"统计数据暂不可用\","
-          "\"allDevices\":true,\"devices\":[],\"points\":[]}";
+           "\"granularity\":\"day\",\"anchor\":0,"
+           "\"previousAnchor\":0,\"nextAnchor\":0,"
+           "\"weekdayOffset\":0,\"title\":\"统计数据暂不可用\","
+           "\"points\":[]}";
     }
     const std::wstring wide_json = Utf8ToWide(json);
     if (!wide_json.empty()) {

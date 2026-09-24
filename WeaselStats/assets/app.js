@@ -5,8 +5,6 @@
     view: "line",
     granularity: "day",
     anchor: 0,
-    allDevices: true,
-    deviceIds: new Set(),
     report: null,
     chart: null,
   };
@@ -22,17 +20,11 @@
     notice: document.getElementById("notice"),
     chart: document.getElementById("lineChart"),
     calendar: document.getElementById("calendar"),
-    devicePicker: document.getElementById("devicePicker"),
-    deviceSummary: document.getElementById("deviceSummary"),
-    devicePanel: document.getElementById("devicePanel"),
   };
 
   function query(anchor = state.anchor) {
-    const devices = state.allDevices
-      ? "all"
-      : Array.from(state.deviceIds).map(encodeURIComponent).join(",");
     window.chrome.webview.postMessage(
-      `query|${state.granularity}|${anchor || 0}|${devices || "all"}`
+      `query|${state.granularity}|${anchor || 0}`
     );
   }
 
@@ -71,56 +63,6 @@
       ? 70
       : 42;
     return `hsl(${hue} 76% ${lightness}%)`;
-  }
-
-  function renderDevices(report) {
-    elements.devicePanel.replaceChildren();
-
-    const addOption = (label, checked, onChange) => {
-      const option = document.createElement("label");
-      option.className = "device-option";
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = checked;
-      checkbox.addEventListener("change", () => onChange(checkbox.checked));
-      const text = document.createElement("span");
-      text.textContent = label;
-      option.append(checkbox, text);
-      elements.devicePanel.append(option);
-    };
-
-    addOption("全部设备", state.allDevices, (checked) => {
-      if (!checked) {
-        renderDevices(report);
-        return;
-      }
-      state.allDevices = true;
-      state.deviceIds.clear();
-      query();
-    });
-
-    report.devices.forEach((device) => {
-      addOption(device.id, state.deviceIds.has(device.id), (checked) => {
-        state.allDevices = false;
-        if (checked) {
-          state.deviceIds.add(device.id);
-        } else {
-          state.deviceIds.delete(device.id);
-        }
-        if (!state.deviceIds.size) {
-          state.allDevices = true;
-        }
-        query();
-      });
-    });
-
-    if (state.allDevices) {
-      elements.deviceSummary.textContent = "全部设备";
-    } else if (state.deviceIds.size === 1) {
-      elements.deviceSummary.textContent = Array.from(state.deviceIds)[0];
-    } else {
-      elements.deviceSummary.textContent = `${state.deviceIds.size} 台设备`;
-    }
   }
 
   function renderChart(report) {
@@ -239,10 +181,6 @@
     state.report = report;
     state.granularity = report.granularity;
     state.anchor = report.anchor;
-    state.allDevices = report.allDevices;
-    state.deviceIds = new Set(
-      report.devices.filter((device) => device.selected).map((device) => device.id)
-    );
 
     elements.tabs.forEach((tab) => {
       const active = tab.dataset.granularity === report.granularity;
@@ -258,7 +196,6 @@
     elements.total.textContent = formatUnits(total);
     elements.notice.hidden = report.available;
 
-    renderDevices(report);
     renderChart(report);
     renderCalendar(report);
   }

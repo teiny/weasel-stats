@@ -7,6 +7,7 @@
 
 #include <WeaselStatsProtocol.h>
 
+#include "InstallationIdentity.h"
 #include "StatsDatabase.h"
 #include "StatsView.h"
 #include "WinSqlite.h"
@@ -106,6 +107,7 @@ std::string_view FixedString(const char* value, std::size_t capacity) {
 }
 
 bool HandleRequest(weasel::stats::StatsDatabase& database,
+                   weasel::stats::InstallationIdentity& identity,
                    const Request& request,
                    Response& response,
                    bool& stop) {
@@ -117,33 +119,34 @@ bool HandleRequest(weasel::stats::StatsDatabase& database,
 
   const auto server_id =
       FixedString(request.server_id, sizeof(request.server_id));
-  const auto device_id =
-      FixedString(request.device_id, sizeof(request.device_id));
   switch (request.type) {
-    case MessageType::kCommit:
-      if (server_id.empty() || device_id.empty() || !request.day ||
-          !request.sequence || !request.text_size) {
+    case MessageType::kCommit: {
+      if (server_id.empty() || !request.day || !request.sequence ||
+          !request.text_size) {
         response.status = ResponseStatus::kInvalidRequest;
         return true;
       }
+      const std::string& device_id = identity.device_id();
       if (!database.RecordCommit(
               server_id, request.sequence, device_id, request.day,
               std::string_view(request.text, request.text_size), response)) {
         response.status = ResponseStatus::kDatabaseUnavailable;
       }
       return true;
-    case MessageType::kCorrection:
-      if (server_id.empty() || device_id.empty() || !request.day ||
-          !request.sequence) {
+    }
+    case MessageType::kCorrection: {
+      if (server_id.empty() || !request.day || !request.sequence) {
         response.status = ResponseStatus::kInvalidRequest;
         return true;
       }
+      const std::string& device_id = identity.device_id();
       if (!database.RecordCorrection(server_id, request.sequence, device_id,
                                      request.day, request.backspace_count,
                                      request.deleted_ascii_letters, response)) {
         response.status = ResponseStatus::kDatabaseUnavailable;
       }
       return true;
+    }
     case MessageType::kGetToday:
       if (!request.day || !database.GetSummary(request.day, response)) {
         response.status = ResponseStatus::kDatabaseUnavailable;
@@ -179,7 +182,8 @@ bool HandleRequest(weasel::stats::StatsDatabase& database,
   }
 }
 
-int RunPipeServer(weasel::stats::StatsDatabase& database) {
+int RunPipeServer(weasel::stats::StatsDatabase& database,
+                  weasel::stats::InstallationIdentity& identity) {
   bool stop = false;
   while (!stop) {
     HANDLE pipe =
@@ -200,7 +204,7 @@ int RunPipeServer(weasel::stats::StatsDatabase& database) {
       Response response{};
       if (ReadFile(pipe, &request, sizeof(request), &bytes_read, nullptr) &&
           bytes_read == sizeof(request)) {
-        HandleRequest(database, request, response, stop);
+        HandleRequest(database, identity, request, response, stop);
       }
       DWORD bytes_written = 0;
       WriteFile(pipe, &response, sizeof(response), &bytes_written, nullptr);
@@ -262,9 +266,10 @@ int WINAPI wWinMain(HINSTANCE instance,
       WriteStartupLog("sqlite_loaded");
       weasel::stats::StatsDatabase database(sqlite);
       if (database.Open(data_directory / L"weasel-input-statistics.sqlite3")) {
+        weasel::stats::InstallationIdentity identity(data_directory);
         WriteStartupLog("database_opened");
         WriteStartupLog("pipe_server_begin");
-        result = RunPipeServer(database);
+        result = RunPipeServer(database, identity);
       } else {
         WriteStartupLog("database_open_failed");
       }

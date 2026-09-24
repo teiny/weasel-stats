@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "WinSqlite.h"
 
@@ -18,7 +17,6 @@ enum class ReportGranularity {
 struct ReportQuery {
   ReportGranularity granularity = ReportGranularity::kDay;
   int anchor = 0;
-  std::vector<std::string> device_ids;
 };
 
 class StatsReport {

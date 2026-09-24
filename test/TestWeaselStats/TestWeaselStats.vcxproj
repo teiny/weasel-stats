@@ -75,14 +75,18 @@
   <ItemGroup>
     <ClCompile Include="TestWeaselStats.cpp" />
     <ClCompile Include="..\..\WeaselServer\InputStatisticsClient.cpp" />
+    <ClCompile Include="..\..\WeaselStats\InstallationIdentity.cpp" />
     <ClCompile Include="..\..\WeaselStats\StatsDatabase.cpp" />
+    <ClCompile Include="..\..\WeaselStats\StatsReport.cpp" />
     <ClCompile Include="..\..\WeaselStats\TextMetrics.cpp" />
     <ClCompile Include="..\..\WeaselStats\WinSqlite.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\WeaselStatsProtocol.h" />
     <ClInclude Include="..\..\WeaselServer\InputStatisticsClient.h" />
+    <ClInclude Include="..\..\WeaselStats\InstallationIdentity.h" />
     <ClInclude Include="..\..\WeaselStats\StatsDatabase.h" />
+    <ClInclude Include="..\..\WeaselStats\StatsReport.h" />
     <ClInclude Include="..\..\WeaselStats\TextMetrics.h" />
     <ClInclude Include="..\..\WeaselStats\WinSqlite.h" />
   </ItemGroup>

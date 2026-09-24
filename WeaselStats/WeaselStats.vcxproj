@@ -90,6 +90,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="InstallationIdentity.cpp" />
     <ClCompile Include="StatsReport.cpp" />
     <ClCompile Include="StatsView.cpp" />
     <ClCompile Include="StatsDatabase.cpp" />
@@ -99,6 +100,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\WeaselStatsProtocol.h" />
+    <ClInclude Include="InstallationIdentity.h" />
     <ClInclude Include="StatsReport.h" />
     <ClInclude Include="StatsResources.h" />
     <ClInclude Include="StatsView.h" />
