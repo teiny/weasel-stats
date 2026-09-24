@@ -1,12 +1,15 @@
 #include <Windows.h>
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
 #include <WeaselStatsProtocol.h>
 
+#include "../../WeaselStats/InstallationIdentity.h"
 #include "../../WeaselStats/StatsDatabase.h"
+#include "../../WeaselStats/StatsReport.h"
 #include "../../WeaselStats/TextMetrics.h"
 #include "../../WeaselStats/WinSqlite.h"
 #include "../../WeaselServer/InputStatisticsClient.h"
@@ -43,6 +46,44 @@ void TestTextMetrics() {
         "does not count punctuation or emoji in overview");
 }
 
+void TestInstallationIdentity() {
+  const fs::path directory =
+      fs::temp_directory_path() /
+      (L"weasel-stats-identity-test-" +
+       std::to_wstring(GetCurrentProcessId()));
+  std::error_code error;
+  fs::remove_all(directory, error);
+  error.clear();
+  fs::create_directories(directory, error);
+  Check(!error, "creates installation identity test directory");
+  if (error) {
+    return;
+  }
+
+  weasel::stats::InstallationIdentity identity(directory, 0);
+  Check(identity.device_id() == "unknown",
+        "uses unknown when installation.yaml is missing");
+
+  {
+    std::ofstream installation(directory / L"installation.yaml",
+                               std::ios::binary | std::ios::trunc);
+    installation << "distribution_code_name: Weasel\n";
+  }
+  Check(identity.device_id() == "unknown",
+        "uses unknown when installation_id is missing");
+
+  {
+    std::ofstream installation(directory / L"installation.yaml",
+                               std::ios::binary | std::ios::trunc);
+    installation << "installation_id: \"Worker\"\n";
+  }
+  Check(identity.device_id() == "Worker",
+        "reloads a valid installation id after an unknown result");
+
+  fs::remove_all(directory, error);
+  Check(!error, "removes installation identity test directory");
+}
+
 void TestDatabase() {
   weasel::stats::WinSqlite sqlite;
   Check(sqlite.Load(), "loads winsqlite3 from the Windows system directory");
@@ -62,8 +103,9 @@ void TestDatabase() {
   }
 
   {
+    const fs::path database_path = directory / L"statistics.sqlite3";
     weasel::stats::StatsDatabase database(sqlite);
-    Check(database.Open(directory / L"statistics.sqlite3"),
+    Check(database.Open(database_path),
           "creates statistics database");
 
     weasel::stats::Response response{};
@@ -97,6 +139,22 @@ void TestDatabase() {
               response.day == 20260909 && response.overview_units == 0 &&
               response.commits == 0,
           "represents a missing day as a valid zero");
+
+    weasel::stats::StatsReport report(sqlite, database_path);
+    weasel::stats::ReportQuery query;
+    query.granularity = weasel::stats::ReportGranularity::kDay;
+    query.anchor = 202609;
+    std::string json;
+    Check(report.BuildJson(query, json), "builds statistics report JSON");
+    Check(json.find("\"devices\"") == std::string::npos &&
+              json.find("\"allDevices\"") == std::string::npos,
+          "does not expose a device dimension in the report");
+    const std::size_t day = json.find("\"key\":20260910");
+    const std::size_t end = json.find('}', day);
+    const std::size_t value = json.find("\"value\":5", day);
+    Check(day != std::string::npos && value != std::string::npos &&
+              end != std::string::npos && value < end,
+          "aggregates report values across devices");
   }
 
   fs::remove_all(directory, error);
@@ -117,7 +175,7 @@ void TestClientProcess(const fs::path& install_directory) {
   }
 
   InputStatisticsClient client;
-  client.Start(directory, "test-device", install_directory, nullptr, 0);
+  client.Start("test-device", install_directory, nullptr, 0);
 
   StatisticsSummary summary;
   for (int attempt = 0; attempt < 50; ++attempt) {
@@ -165,8 +223,9 @@ void TestClientProcess(const fs::path& install_directory) {
 void TestMissingProcessIsBounded() {
   InputStatisticsClient client;
   const ULONGLONG started = GetTickCount64();
-  client.Start(fs::temp_directory_path(), "test-device",
-               fs::temp_directory_path() / L"missing-weasel-stats", nullptr, 0);
+  client.Start("test-device",
+               fs::temp_directory_path() / L"missing-weasel-stats", nullptr,
+               0);
   bool notified = false;
   for (int attempt = 0; attempt < 60; ++attempt) {
     if (client.ConsumeFailureNotification()) {
@@ -198,11 +257,16 @@ int main(int argc, char* argv[]) {
     TestDatabase();
     return failures ? 1 : 0;
   }
+  if (argc == 2 && std::string(argv[1]) == "--identity") {
+    TestInstallationIdentity();
+    return failures ? 1 : 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--missing") {
     TestMissingProcessIsBounded();
     return failures ? 1 : 0;
   }
   TestTextMetrics();
+  TestInstallationIdentity();
   TestDatabase();
   if (argc == 2) {
     TestClientProcess(fs::path(argv[1]).parent_path());

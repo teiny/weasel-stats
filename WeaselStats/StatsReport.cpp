@@ -7,10 +7,10 @@
 #include <iomanip>
 #include <limits>
 #include <map>
-#include <set>
 #include <sstream>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace weasel::stats {
 namespace {
@@ -77,8 +77,6 @@ struct Result {
   int next_anchor = 0;
   int weekday_offset = 0;
   std::string title;
-  std::vector<std::string> devices;
-  std::set<std::string> selected_devices;
   std::vector<Point> points;
 };
 
@@ -324,21 +322,7 @@ std::string Serialize(const Result& result) {
          << result.previous_anchor << ",\"nextAnchor\":"
          << result.next_anchor << ",\"weekdayOffset\":"
          << result.weekday_offset << ",\"title\":" << JsonEscape(result.title)
-         << ",\"allDevices\":"
-         << (result.selected_devices.empty() || result.devices.empty()
-                 ? "true"
-                 : "false")
-         << ",\"devices\":[";
-  for (std::size_t index = 0; index < result.devices.size(); ++index) {
-    if (index) {
-      stream << ',';
-    }
-    const auto& device = result.devices[index];
-    stream << "{\"id\":" << JsonEscape(device) << ",\"selected\":"
-           << (result.selected_devices.count(device) ? "true" : "false")
-           << '}';
-  }
-  stream << "],\"points\":[";
+         << ",\"points\":[";
   for (std::size_t index = 0; index < result.points.size(); ++index) {
     if (index) {
       stream << ',';
@@ -363,8 +347,6 @@ bool StatsReport::BuildJson(const ReportQuery& query,
     Result result;
     result.granularity = query.granularity;
     result.anchor = query.anchor;
-    result.selected_devices.insert(query.device_ids.begin(),
-                                   query.device_ids.end());
 
     std::error_code error;
     const bool exists = std::filesystem::exists(database_path_, error);
@@ -408,28 +390,6 @@ bool StatsReport::BuildJson(const ReportQuery& query,
 
     int earliest_day = DayKey(today.year, today.month, today.day);
     if (result.available) {
-      Statement devices(
-          sqlite_, database.get(),
-          "SELECT DISTINCT device_id FROM daily_totals ORDER BY device_id;");
-      if (!devices.get()) {
-        result.available = false;
-      } else {
-        int step = SQLITE_ROW;
-        while ((step = sqlite_.step(devices.get())) == SQLITE_ROW) {
-          const unsigned char* value = sqlite_.column_text(devices.get(), 0);
-          if (!value) {
-            result.available = false;
-            break;
-          }
-          result.devices.emplace_back(reinterpret_cast<const char*>(value));
-        }
-        if (step != SQLITE_DONE) {
-          result.available = false;
-        }
-      }
-    }
-
-    if (result.available) {
       Statement earliest(sqlite_, database.get(),
                          "SELECT COALESCE(MIN(day),0) FROM daily_totals;");
       if (!earliest.get() || sqlite_.step(earliest.get()) != SQLITE_ROW) {
@@ -440,16 +400,6 @@ bool StatsReport::BuildJson(const ReportQuery& query,
           earliest_day = static_cast<int>(value);
         }
       }
-    }
-
-    if (result.available && !result.selected_devices.empty()) {
-      std::set<std::string> available_devices;
-      for (const auto& device : result.devices) {
-        if (result.selected_devices.count(device)) {
-          available_devices.insert(device);
-        }
-      }
-      result.selected_devices.swap(available_devices);
     }
 
     DefinePeriods(result, earliest_day, today);
@@ -479,7 +429,7 @@ bool StatsReport::BuildJson(const ReportQuery& query,
 
     Statement totals(
         sqlite_, database.get(),
-        "SELECT device_id,day,han_characters,english_words "
+        "SELECT day,han_characters,english_words "
         "FROM daily_totals WHERE day>=?1 AND day<=?2 ORDER BY day;");
     if (!totals.get() ||
         sqlite_.bind_int64(totals.get(), 1, first_day) != SQLITE_OK ||
@@ -492,20 +442,13 @@ bool StatsReport::BuildJson(const ReportQuery& query,
     std::map<int, std::uint64_t> values;
     int step = SQLITE_ROW;
     while ((step = sqlite_.step(totals.get())) == SQLITE_ROW) {
-      const unsigned char* device_value = sqlite_.column_text(totals.get(), 0);
-      const sqlite3_int64 day_value = sqlite_.column_int64(totals.get(), 1);
-      const sqlite3_int64 han = sqlite_.column_int64(totals.get(), 2);
-      const sqlite3_int64 english = sqlite_.column_int64(totals.get(), 3);
-      if (!device_value || day_value <= 0 ||
-          day_value > (std::numeric_limits<int>::max)() || han < 0 ||
-          english < 0) {
+      const sqlite3_int64 day_value = sqlite_.column_int64(totals.get(), 0);
+      const sqlite3_int64 han = sqlite_.column_int64(totals.get(), 1);
+      const sqlite3_int64 english = sqlite_.column_int64(totals.get(), 2);
+      if (day_value <= 0 || day_value > (std::numeric_limits<int>::max)() ||
+          han < 0 || english < 0) {
         result.available = false;
         break;
-      }
-      const std::string device(reinterpret_cast<const char*>(device_value));
-      if (!result.selected_devices.empty() &&
-          !result.selected_devices.count(device)) {
-        continue;
       }
       int key = static_cast<int>(day_value);
       if (result.granularity == ReportGranularity::kMonth) {
