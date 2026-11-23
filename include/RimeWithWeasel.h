@@ -5,8 +5,13 @@
 #include <map>
 #include <string>
 #include <mutex>
+#include <atomic>
+#include <future>
+#include <memory>
+#include <thread>
 
 #include <rime_api.h>
+#include "../RimeWithWeasel/DeploymentSnapshot.h"
 
 struct CaseInsensitiveCompare {
   bool operator()(const std::string& str1, const std::string& str2) const {
@@ -59,12 +64,14 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void UpdateInputPosition(RECT const& rc, WeaselSessionId ipc_id);
   virtual void StartMaintenance();
   virtual void EndMaintenance();
+  virtual void CheckMaintenance();
   virtual void SetOption(WeaselSessionId ipc_id,
                          const std::string& opt,
                          bool val);
   virtual void UpdateColorTheme(BOOL darkMode);
 
   void OnUpdateUI(std::function<void()> const& cb);
+  void OnMaintenanceReady(std::function<void()> const& cb);
   void OnCommit(std::function<void(const char*)> const& cb);
   void OnCorrection(
       std::function<void(std::uint32_t, std::uint32_t)> const& cb);
@@ -73,6 +80,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
 
  private:
   void _Setup();
+  void _Initialize(const weasel::DeploymentCheck* check);
+  weasel::DeploymentCache _DeploymentCache() const;
+  void _FinishDeploymentCheck();
   bool _IsDeployerRunning();
   void _UpdateUI(WeaselSessionId ipc_id);
   void _LoadSchemaSpecificSettings(WeaselSessionId ipc_id,
@@ -111,6 +121,11 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::map<std::string, bool> m_show_notifications;
   std::map<std::string, bool> m_show_notifications_base;
   std::function<void()> _UpdateUICallback;
+  std::function<void()> m_maintenance_callback;
+  std::future<weasel::DeploymentCheck> m_deployment_check;
+  std::thread m_deployment_worker;
+  std::shared_ptr<std::atomic<bool>> m_deployment_cancelled;
+  std::atomic<bool> m_deployment_succeeded{false};
   std::function<void(const char*)> _CommitCallback;
   std::function<void(std::uint32_t, std::uint32_t)> _CorrectionCallback;
 

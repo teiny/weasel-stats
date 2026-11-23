@@ -84,6 +84,7 @@ struct RequestHandler {
   virtual void UpdateInputPosition(RECT const& rc, DWORD session_id) {}
   virtual void StartMaintenance() {}
   virtual void EndMaintenance() {}
+  virtual void CheckMaintenance() {}
   virtual void SetOption(DWORD session_id, const std::string& opt, bool val) {}
   virtual void UpdateColorTheme(BOOL darkMode) {}
 };

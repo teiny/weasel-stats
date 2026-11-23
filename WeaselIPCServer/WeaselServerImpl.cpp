@@ -26,6 +26,8 @@ class PipeServer : public PipeChannel<DWORD, PipeMessage> {
 
 using namespace weasel;
 
+static std::mutex g_api_mutex;
+
 extern CAppModule _Module;
 
 ServerImpl::ServerImpl()
@@ -135,9 +137,14 @@ LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
                                            WPARAM wParam,
                                            LPARAM lParam,
                                            BOOL& bHandled) {
-  // Runs on the server message thread, NOT on a pipe worker thread and
-  // without holding g_api_mutex, so that Shell_NotifyIcon inside the tray
-  // update can never deadlock against the taskbar UI thread.
+  {
+    std::lock_guard guard(g_api_mutex);
+    if (m_pRequestHandler) {
+      m_pRequestHandler->CheckMaintenance();
+    }
+  }
+  // Tray updates run without g_api_mutex so Shell_NotifyIcon cannot deadlock
+  // against the taskbar UI thread.
   if (m_trayRefreshCallback) {
     m_trayRefreshCallback();
   }
@@ -186,8 +193,6 @@ int ServerImpl::Stop() {
   PostMessage(WM_QUIT);
   return 0;
 }
-
-static std::mutex g_api_mutex;
 
 int ServerImpl::Run() {
   // This workaround causes a VC internal error:

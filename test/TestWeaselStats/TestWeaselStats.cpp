@@ -155,6 +155,28 @@ void TestDatabase() {
     Check(day != std::string::npos && value != std::string::npos &&
               end != std::string::npos && value < end,
           "aggregates report values across devices");
+
+    const fs::path sync_directory = directory / L"sync";
+    Check(database.Synchronize(sync_directory, 20260910, response),
+          "publishes statistics to an isolated shared snapshot");
+    {
+      weasel::stats::StatsDatabase other(sqlite);
+      Check(other.Open(directory / L"other.sqlite3"),
+            "opens another device database");
+      Check(other.RecordCommit("server-b", 1, "device-c", 20260910, "third",
+                               response),
+            "records another device before synchronization");
+      Check(other.Synchronize(sync_directory, 20260910, response) &&
+                response.overview_units == 6 && response.commits == 3,
+            "merges local and shared device statistics");
+    }
+    Check(database.Synchronize(sync_directory, 20260910, response) &&
+              response.overview_units == 6 && response.commits == 3 &&
+              response.backspaces == 1,
+          "imports other-device statistics and preserves corrections");
+    Check(database.Synchronize(sync_directory, 20260910, response) &&
+              response.overview_units == 6 && response.commits == 3,
+          "repeated synchronization does not duplicate statistics");
   }
 
   fs::remove_all(directory, error);

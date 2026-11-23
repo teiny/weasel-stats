@@ -70,6 +70,7 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
 }
 
 RimeWithWeaselHandler::~RimeWithWeaselHandler() {
+  _FinishDeploymentCheck();
   m_show_notifications.clear();
   m_session_status_map.clear();
   m_app_options.clear();
@@ -117,6 +118,19 @@ void RimeWithWeaselHandler::_Setup() {
 }
 
 void RimeWithWeaselHandler::Initialize() {
+  _Initialize(nullptr);
+}
+
+weasel::DeploymentCache RimeWithWeaselHandler::_DeploymentCache() const {
+  const char* version = RIME_API_AVAILABLE(rime_api, get_version)
+                            ? rime_api->get_version()
+                            : nullptr;
+  return weasel::DeploymentCache(WeaselUserDataPath(), WeaselSharedDataPath(),
+                                 std::filesystem::u8path(GetSyncDir()),
+                                 version ? version : "unknown");
+}
+
+void RimeWithWeaselHandler::_Initialize(const weasel::DeploymentCheck* check) {
   m_disabled = _IsDeployerRunning();
   if (m_disabled) {
     return;
@@ -124,9 +138,33 @@ void RimeWithWeaselHandler::Initialize() {
 
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
-  if (rime_api->start_maintenance(/*full_check = */ False)) {
-    m_disabled = true;
-    rime_api->join_maintenance_thread();
+  const auto cache = _DeploymentCache();
+  const auto current = check ? *check : cache.Check();
+  if (!current.unchanged) {
+    LOG(INFO) << "CRC32 deployment check: "
+              << (current.available ? "inputs or products changed."
+                                    : "unavailable; using Rime detection.");
+    m_deployment_succeeded.store(false);
+    const bool prepared = current.available &&
+                          cache.PrepareDeployment(rime_api, current.snapshot);
+    if (rime_api->start_maintenance(current.available ? True : False)) {
+      m_disabled = true;
+      rime_api->join_maintenance_thread();
+      if (m_deployment_succeeded.load()) {
+        m_disabled = false;
+        const bool config_deployed =
+            !current.available ||
+            (rime_api->deploy_config_file("weasel.yaml", "config_version") &&
+             cache.VerifyDeployment(rime_api));
+        if (current.available &&
+            (!prepared ||
+             !cache.RecordDeployment(current.snapshot, config_deployed))) {
+          LOG(WARNING) << "CRC32 deployment snapshot was not saved.";
+        }
+      }
+    }
+  } else {
+    LOG(INFO) << "CRC32 deployment check: unchanged; skipping maintenance.";
   }
 
   RimeConfig config = {NULL};
@@ -159,6 +197,7 @@ void RimeWithWeaselHandler::Initialize() {
 }
 
 void RimeWithWeaselHandler::Finalize() {
+  _FinishDeploymentCheck();
   m_active_session = 0;
   m_disabled = true;
   m_session_status_map.clear();
@@ -427,6 +466,9 @@ void RimeWithWeaselHandler::OnNotify(void* context_object,
       reinterpret_cast<RimeWithWeaselHandler*>(context_object);
   if (!self || !message_type || !message_value)
     return;
+  if (!strcmp(message_type, "deploy")) {
+    self->m_deployment_succeeded.store(!strcmp(message_value, "success"));
+  }
   std::lock_guard<std::mutex> lock(m_notifier_mutex);
   m_message_type = message_type;
   m_message_value = message_value;
@@ -518,10 +560,58 @@ void RimeWithWeaselHandler::StartMaintenance() {
 
 void RimeWithWeaselHandler::EndMaintenance() {
   if (m_disabled) {
-    Initialize();
+    if (_IsDeployerRunning()) {
+      return;
+    }
+    if (!m_deployment_check.valid()) {
+      std::promise<weasel::DeploymentCheck> completed;
+      m_deployment_check = completed.get_future();
+      m_deployment_cancelled = std::make_shared<std::atomic<bool>>(false);
+      m_deployment_worker = std::thread(
+          [cache = _DeploymentCache(), completed = std::move(completed),
+           cancelled = m_deployment_cancelled,
+           notify = m_maintenance_callback]() mutable {
+            completed.set_value(cache.Check(cancelled.get()));
+            if (notify) {
+              notify();
+            }
+          });
+      return;
+    }
+    if (m_deployment_check.wait_for(std::chrono::seconds(0)) !=
+        std::future_status::ready) {
+      return;
+    }
+    const auto check = m_deployment_check.get();
+    _FinishDeploymentCheck();
+    _Initialize(&check);
     _UpdateUI(0);
   }
   m_session_status_map.clear();
+}
+
+void RimeWithWeaselHandler::CheckMaintenance() {
+  if (m_deployment_check.valid() &&
+      m_deployment_check.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    EndMaintenance();
+  }
+}
+
+void RimeWithWeaselHandler::_FinishDeploymentCheck() {
+  if (m_deployment_cancelled) {
+    m_deployment_cancelled->store(true);
+  }
+  if (m_deployment_worker.joinable()) {
+    m_deployment_worker.join();
+  }
+  m_deployment_check = std::future<weasel::DeploymentCheck>{};
+  m_deployment_cancelled.reset();
+}
+
+void RimeWithWeaselHandler::OnMaintenanceReady(
+    std::function<void()> const& cb) {
+  m_maintenance_callback = cb;
 }
 
 void RimeWithWeaselHandler::SetOption(WeaselSessionId ipc_id,

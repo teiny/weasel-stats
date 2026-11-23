@@ -1,0 +1,10 @@
+target("TestDeploymentSnapshot")
+  set_kind("binary")
+  add_files("./*.cpp", "$(projectdir)/RimeWithWeasel/DeploymentSnapshot.cpp")
+  add_defines("RIME_IMPORTS")
+  add_links("rime")
+  add_rules("subcmd")
+  after_build(function(target)
+    local runtime = is_arch("x86") and "output/Win32/rime.dll" or "output/rime.dll"
+    os.cp(path.join("$(projectdir)", runtime), target:targetdir())
+  end)
