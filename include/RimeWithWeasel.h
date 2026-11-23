@@ -65,6 +65,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void StartMaintenance();
   virtual void EndMaintenance();
   virtual void CheckMaintenance();
+  bool IsMaintenanceRunning() const override { return m_maintenance_running; }
   virtual void SetOption(WeaselSessionId ipc_id,
                          const std::string& opt,
                          bool val);
@@ -80,7 +81,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
 
  private:
   void _Setup();
-  void _Initialize(const weasel::DeploymentCheck* check);
+  bool _InitializeEngine(const std::atomic<bool>* cancelled);
+  void _LoadConfiguration();
+  void _RefreshRuntimePaths();
   weasel::DeploymentCache _DeploymentCache() const;
   void _FinishDeploymentCheck();
   bool _IsDeployerRunning();
@@ -122,10 +125,15 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::map<std::string, bool> m_show_notifications_base;
   std::function<void()> _UpdateUICallback;
   std::function<void()> m_maintenance_callback;
-  std::future<weasel::DeploymentCheck> m_deployment_check;
+  std::future<bool> m_deployment_check;
   std::thread m_deployment_worker;
   std::shared_ptr<std::atomic<bool>> m_deployment_cancelled;
   std::atomic<bool> m_deployment_succeeded{false};
+  std::atomic<bool> m_maintenance_running{false};
+  bool m_engine_initialized = false;
+  mutable std::mutex m_paths_mutex;
+  std::string m_user_id;
+  std::string m_sync_dir;
   std::function<void(const char*)> _CommitCallback;
   std::function<void(std::uint32_t, std::uint32_t)> _CorrectionCallback;
 

@@ -83,19 +83,11 @@ bool _UpdateUIStyleColor(RimeConfig* config,
                          const std::string& color = std::string());
 void _LoadAppOptions(RimeConfig* config, AppOptionsByAppName& app_options);
 
-void _RefreshTrayIcon(const RimeSessionId session_id,
+void _RefreshTrayIcon(const RimeSessionId,
                       const std::function<void()> _UpdateUICallback) {
-  // Dangerous, don't touch
-  static char app_name[256] = {0};
-  auto ret = rime_api->get_property(session_id, "client_app", app_name,
-                                    sizeof(app_name) - 1);
-  if (!ret || u8tow(app_name) == std::wstring(L"explorer.exe"))
-    boost::thread th([=]() {
-      ::Sleep(100);
-      if (_UpdateUICallback)
-        _UpdateUICallback();
-    });
-  else if (_UpdateUICallback)
+  // RequestRefresh only captures state and posts a window message. Keep that
+  // capture on the serialized API thread instead of a detached delayed thread.
+  if (_UpdateUICallback)
     _UpdateUICallback();
 }
 
@@ -115,10 +107,12 @@ void RimeWithWeaselHandler::_Setup() {
   weasel_traits.log_dir = log_dir.c_str();
   rime_api->setup(&weasel_traits);
   rime_api->set_notification_handler(&RimeWithWeaselHandler::OnNotify, this);
+  _RefreshRuntimePaths();
 }
 
 void RimeWithWeaselHandler::Initialize() {
-  _Initialize(nullptr);
+  m_ui->status().disabled = true;
+  EndMaintenance();
 }
 
 weasel::DeploymentCache RimeWithWeaselHandler::_DeploymentCache() const {
@@ -130,16 +124,22 @@ weasel::DeploymentCache RimeWithWeaselHandler::_DeploymentCache() const {
                                  version ? version : "unknown");
 }
 
-void RimeWithWeaselHandler::_Initialize(const weasel::DeploymentCheck* check) {
-  m_disabled = _IsDeployerRunning();
-  if (m_disabled) {
-    return;
+bool RimeWithWeaselHandler::_InitializeEngine(
+    const std::atomic<bool>* cancelled) {
+  if (cancelled->load() || _IsDeployerRunning()) {
+    return false;
   }
 
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
+  m_engine_initialized = true;
+  _RefreshRuntimePaths();
   const auto cache = _DeploymentCache();
-  const auto current = check ? *check : cache.Check();
+  const auto current = cache.Check(cancelled);
+  if (cancelled->load()) {
+    return false;
+  }
+  bool ready = true;
   if (!current.unchanged) {
     LOG(INFO) << "CRC32 deployment check: "
               << (current.available ? "inputs or products changed."
@@ -148,10 +148,9 @@ void RimeWithWeaselHandler::_Initialize(const weasel::DeploymentCheck* check) {
     const bool prepared = current.available &&
                           cache.PrepareDeployment(rime_api, current.snapshot);
     if (rime_api->start_maintenance(current.available ? True : False)) {
-      m_disabled = true;
       rime_api->join_maintenance_thread();
-      if (m_deployment_succeeded.load()) {
-        m_disabled = false;
+      ready = m_deployment_succeeded.load();
+      if (ready && !cancelled->load()) {
         const bool config_deployed =
             !current.available ||
             (rime_api->deploy_config_file("weasel.yaml", "config_version") &&
@@ -166,7 +165,10 @@ void RimeWithWeaselHandler::_Initialize(const weasel::DeploymentCheck* check) {
   } else {
     LOG(INFO) << "CRC32 deployment check: unchanged; skipping maintenance.";
   }
+  return ready && !cancelled->load();
+}
 
+void RimeWithWeaselHandler::_LoadConfiguration() {
   RimeConfig config = {NULL};
   if (rime_api->config_open("weasel", &config)) {
     if (m_ui) {
@@ -197,12 +199,17 @@ void RimeWithWeaselHandler::_Initialize(const weasel::DeploymentCheck* check) {
 }
 
 void RimeWithWeaselHandler::Finalize() {
+  m_maintenance_running = true;
+  m_disabled = true;
   _FinishDeploymentCheck();
   m_active_session = 0;
-  m_disabled = true;
   m_session_status_map.clear();
   LOG(INFO) << "Finalizing la rime.";
-  rime_api->finalize();
+  if (m_engine_initialized) {
+    rime_api->finalize();
+    m_engine_initialized = false;
+  }
+  m_maintenance_running = false;
 }
 
 DWORD RimeWithWeaselHandler::FindSession(WeaselSessionId ipc_id) {
@@ -279,6 +286,8 @@ DWORD RimeWithWeaselHandler::RemoveSession(WeaselSessionId ipc_id) {
 }
 
 void RimeWithWeaselHandler::UpdateColorTheme(BOOL darkMode) {
+  if (m_disabled || m_maintenance_running)
+    return;
   RimeConfig config = {NULL};
   if (rime_api->config_open("weasel", &config)) {
     if (m_ui) {
@@ -559,42 +568,46 @@ void RimeWithWeaselHandler::StartMaintenance() {
 }
 
 void RimeWithWeaselHandler::EndMaintenance() {
-  if (m_disabled) {
-    if (_IsDeployerRunning()) {
-      return;
-    }
-    if (!m_deployment_check.valid()) {
-      std::promise<weasel::DeploymentCheck> completed;
-      m_deployment_check = completed.get_future();
-      m_deployment_cancelled = std::make_shared<std::atomic<bool>>(false);
-      m_deployment_worker = std::thread(
-          [cache = _DeploymentCache(), completed = std::move(completed),
-           cancelled = m_deployment_cancelled,
-           notify = m_maintenance_callback]() mutable {
-            completed.set_value(cache.Check(cancelled.get()));
-            if (notify) {
-              notify();
-            }
-          });
-      return;
-    }
-    if (m_deployment_check.wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready) {
-      return;
-    }
-    const auto check = m_deployment_check.get();
-    _FinishDeploymentCheck();
-    _Initialize(&check);
-    _UpdateUI(0);
+  if (!m_disabled || m_deployment_check.valid() || _IsDeployerRunning()) {
+    return;
   }
-  m_session_status_map.clear();
+  std::promise<bool> completed;
+  m_deployment_check = completed.get_future();
+  m_deployment_cancelled = std::make_shared<std::atomic<bool>>(false);
+  m_maintenance_running = true;
+  m_deployment_worker =
+      std::thread([this, completed = std::move(completed),
+                   cancelled = m_deployment_cancelled,
+                   notify = m_maintenance_callback]() mutable {
+        bool ready = false;
+        try {
+          ready = _InitializeEngine(cancelled.get());
+        } catch (...) {
+          LOG(ERROR) << "Background Rime initialization failed.";
+        }
+        if (!ready && m_engine_initialized) {
+          rime_api->finalize();
+          m_engine_initialized = false;
+        }
+        completed.set_value(ready);
+        if (!cancelled->load() && notify) {
+          notify();
+        }
+      });
 }
 
 void RimeWithWeaselHandler::CheckMaintenance() {
   if (m_deployment_check.valid() &&
       m_deployment_check.wait_for(std::chrono::seconds(0)) ==
           std::future_status::ready) {
-    EndMaintenance();
+    const bool ready = m_deployment_check.get();
+    _FinishDeploymentCheck();
+    if (ready && !_IsDeployerRunning()) {
+      _LoadConfiguration();
+      m_disabled = false;
+      _UpdateUI(0);
+    }
+    m_maintenance_running = false;
   }
 }
 
@@ -605,7 +618,7 @@ void RimeWithWeaselHandler::_FinishDeploymentCheck() {
   if (m_deployment_worker.joinable()) {
     m_deployment_worker.join();
   }
-  m_deployment_check = std::future<weasel::DeploymentCheck>{};
+  m_deployment_check = std::future<bool>{};
   m_deployment_cancelled.reset();
 }
 
@@ -617,6 +630,8 @@ void RimeWithWeaselHandler::OnMaintenanceReady(
 void RimeWithWeaselHandler::SetOption(WeaselSessionId ipc_id,
                                       const std::string& opt,
                                       bool val) {
+  if (m_disabled || m_maintenance_running)
+    return;
   // from no-session client, not actual typing session
   if (!ipc_id) {
     if (m_global_ascii_mode && opt == "ascii_mode") {
@@ -648,19 +663,30 @@ void RimeWithWeaselHandler::OnCorrection(
 }
 
 std::string RimeWithWeaselHandler::GetUserId() const {
-  const char* user_id = rime_api->get_user_id();
-  return user_id ? user_id : std::string();
+  std::lock_guard lock(m_paths_mutex);
+  return m_user_id;
 }
 
 std::string RimeWithWeaselHandler::GetSyncDir() const {
+  std::lock_guard lock(m_paths_mutex);
+  return m_sync_dir;
+}
+
+void RimeWithWeaselHandler::_RefreshRuntimePaths() {
+  const char* user_id = rime_api->get_user_id();
+  std::string sync_dir;
   if (RIME_API_AVAILABLE(rime_api, get_sync_dir_s)) {
     std::array<char, 4096> path{};
     rime_api->get_sync_dir_s(path.data(), path.size());
     path.back() = '\0';
-    return path.data();
+    sync_dir = path.data();
+  } else {
+    const char* path = rime_api->get_sync_dir();
+    sync_dir = path ? path : std::string();
   }
-  const char* path = rime_api->get_sync_dir();
-  return path ? path : std::string();
+  std::lock_guard lock(m_paths_mutex);
+  m_user_id = user_id ? user_id : std::string();
+  m_sync_dir = std::move(sync_dir);
 }
 
 bool RimeWithWeaselHandler::_IsDeployerRunning() {
