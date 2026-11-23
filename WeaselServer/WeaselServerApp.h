@@ -12,6 +12,7 @@
 #include <winsparkle.h>
 
 #include "WeaselTrayIcon.h"
+#include "InputStatisticsClient.h"
 
 namespace fs = std::filesystem;
 
@@ -65,6 +66,7 @@ class WeaselServerApp {
 
   weasel::Server m_server;
   weasel::UI m_ui;
+  InputStatisticsClient m_statistics;
   WeaselTrayIcon tray_icon;
   std::unique_ptr<RimeWithWeaselHandler> m_handler;
 };

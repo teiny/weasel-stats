@@ -1,3 +1,14 @@
+<a name="stats-v1.0.4-weasel-v0.17.4.0"></a>
+## [stats-v1.0.4-weasel-v0.17.4.0](https://github.com/teiny/weasel-stats/compare/stats-v1.0.3-weasel-v0.17.4.0...stats-v1.0.4-weasel-v0.17.4.0) (2026-09-24)
+
+### 修复
+* 统计进程改为直接读取用户目录中的 `installation.yaml`，避免因服务启动或同步初始化时序导致设备标识被长期记录为 `unknown`。
+* `installation.yaml` 不存在、内容无效或尚未生成时仍使用 `unknown`，并限频重试读取，不影响未启用同步功能的用户。
+
+### 变更
+* 统计报表移除设备维度和设备选择器，统一展示所有设备数据的汇总结果。
+* 保留数据库中的设备标识以及现有 IPC 字段，兼容已有数据和同步流程；历史 `unknown` 记录不会被自动改写。
+
 <a name="0.17.4"></a>
 ## [0.17.4](https://github.com/rime/weasel/compare/0.17.3...0.17.4)(2025-06-04)
 

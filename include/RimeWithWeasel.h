@@ -1,11 +1,17 @@
 #pragma once
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <mutex>
+#include <atomic>
+#include <future>
+#include <memory>
+#include <thread>
 
 #include <rime_api.h>
+#include "../RimeWithWeasel/DeploymentSnapshot.h"
 
 struct CaseInsensitiveCompare {
   bool operator()(const std::string& str1, const std::string& str2) const {
@@ -58,15 +64,28 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void UpdateInputPosition(RECT const& rc, WeaselSessionId ipc_id);
   virtual void StartMaintenance();
   virtual void EndMaintenance();
+  virtual void CheckMaintenance();
+  bool IsMaintenanceRunning() const override { return m_maintenance_running; }
   virtual void SetOption(WeaselSessionId ipc_id,
                          const std::string& opt,
                          bool val);
   virtual void UpdateColorTheme(BOOL darkMode);
 
   void OnUpdateUI(std::function<void()> const& cb);
+  void OnMaintenanceReady(std::function<void()> const& cb);
+  void OnCommit(std::function<void(const char*)> const& cb);
+  void OnCorrection(
+      std::function<void(std::uint32_t, std::uint32_t)> const& cb);
+  std::string GetUserId() const;
+  std::string GetSyncDir() const;
 
  private:
   void _Setup();
+  bool _InitializeEngine(const std::atomic<bool>* cancelled);
+  void _LoadConfiguration();
+  void _RefreshRuntimePaths();
+  weasel::DeploymentCache _DeploymentCache() const;
+  void _FinishDeploymentCheck();
   bool _IsDeployerRunning();
   void _UpdateUI(WeaselSessionId ipc_id);
   void _LoadSchemaSpecificSettings(WeaselSessionId ipc_id,
@@ -105,6 +124,18 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   std::map<std::string, bool> m_show_notifications;
   std::map<std::string, bool> m_show_notifications_base;
   std::function<void()> _UpdateUICallback;
+  std::function<void()> m_maintenance_callback;
+  std::future<bool> m_deployment_check;
+  std::thread m_deployment_worker;
+  std::shared_ptr<std::atomic<bool>> m_deployment_cancelled;
+  std::atomic<bool> m_deployment_succeeded{false};
+  std::atomic<bool> m_maintenance_running{false};
+  bool m_engine_initialized = false;
+  mutable std::mutex m_paths_mutex;
+  std::string m_user_id;
+  std::string m_sync_dir;
+  std::function<void(const char*)> _CommitCallback;
+  std::function<void(std::uint32_t, std::uint32_t)> _CorrectionCallback;
 
   static void OnNotify(void* context_object,
                        uintptr_t session_id,

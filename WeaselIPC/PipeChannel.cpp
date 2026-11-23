@@ -106,8 +106,15 @@ HANDLE PipeChannelBase::_ConnectServerPipe(std::wstring& pn) {
       CreateNamedPipe(pn.c_str(), PIPE_ACCESS_DUPLEX,
                       PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                       PIPE_UNLIMITED_INSTANCES, buff_size, buff_size, 0, sa);
-  if (pipe == INVALID_HANDLE_VALUE || !::ConnectNamedPipe(pipe, NULL)) {
+  if (pipe == INVALID_HANDLE_VALUE) {
     _ThrowLastError;
+  }
+  if (!::ConnectNamedPipe(pipe, NULL)) {
+    const DWORD error = GetLastError();
+    if (error != ERROR_PIPE_CONNECTED) {
+      CloseHandle(pipe);
+      throw error;
+    }
   }
   return pipe;
 }

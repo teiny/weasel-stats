@@ -29,6 +29,10 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   MESSAGE_HANDLER(WM_SETTINGCHANGE, OnColorChange)
   MESSAGE_HANDLER(WM_COMMAND, OnCommand)
   MESSAGE_HANDLER(WM_WEASEL_SERVICE_NOTIFY, OnServiceNotifyMessage)
+  MESSAGE_HANDLER(WM_WEASEL_MAINTENANCE_READY, OnMaintenanceReady)
+  MESSAGE_HANDLER(WM_TIMER, OnMaintenanceTimer)
+  MESSAGE_HANDLER(WM_WEASEL_STATISTICS_SUMMARY,
+                  OnStatisticsSummaryMessage)
   END_MSG_MAP()
 
   LRESULT OnColorChange(UINT uMsg,
@@ -51,6 +55,12 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
                                  WPARAM wParam,
                                  LPARAM lParam,
                                  BOOL& bHandled);
+  LRESULT OnStatisticsSummaryMessage(UINT uMsg,
+                                     WPARAM wParam,
+                                     LPARAM lParam,
+                                     BOOL& bHandled);
+  LRESULT OnMaintenanceReady(UINT, WPARAM, LPARAM, BOOL&);
+  LRESULT OnMaintenanceTimer(UINT, WPARAM, LPARAM, BOOL&);
   DWORD OnCommand(WEASEL_IPC_COMMAND uMsg, DWORD wParam, DWORD lParam);
   DWORD OnEcho(WEASEL_IPC_COMMAND uMsg, DWORD wParam, DWORD lParam);
   DWORD OnStartSession(WEASEL_IPC_COMMAND uMsg, DWORD wParam, DWORD lParam);
@@ -78,6 +88,7 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
 
  public:
   ServerImpl();
+  explicit ServerImpl(std::wstring pipe_name);
   ~ServerImpl();
 
   HWND Start();
@@ -93,9 +104,16 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   void SetTrayRefreshCallback(std::function<void()> callback) {
     m_trayRefreshCallback = callback;
   }
+  void SetStatisticsSummaryProvider(std::function<bool(DWORD&)> provider) {
+    m_statisticsSummaryProvider = provider;
+  }
+  void SetStatisticsSyncHandler(std::function<bool()> handler) {
+    m_statisticsSyncHandler = handler;
+  }
 
  private:
   void _Finailize();
+  void RunDeferredApiWork();
   template <typename _Resp>
   void HandlePipeMessage(PipeMessage pipe_msg, _Resp resp);
 
@@ -104,9 +122,16 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   RequestHandler* m_pRequestHandler;  // reference
   std::map<UINT, CommandHandler> m_MenuHandlers;
   std::function<void()> m_trayRefreshCallback;
+  std::function<bool(DWORD&)> m_statisticsSummaryProvider;
+  std::function<bool()> m_statisticsSyncHandler;
   HMODULE m_hUser32Module;
   SecurityAttribute sa;
   BOOL m_darkMode;
+  bool m_maintenance_pending = false;
+  bool m_color_pending = false;
+  UINT m_option_pending = 0;
+  LPARAM m_option_session = 0;
+  static constexpr UINT_PTR kMaintenanceTimer = 0x57534D52;
 };
 
 }  // namespace weasel
