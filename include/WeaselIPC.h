@@ -87,6 +87,7 @@ struct RequestHandler {
   virtual void EndMaintenance() {}
   virtual void CheckMaintenance() {}
   virtual bool IsMaintenanceRunning() const { return false; }
+  virtual bool IsReady() const { return !IsMaintenanceRunning(); }
   virtual void SetOption(DWORD session_id, const std::string& opt, bool val) {}
   virtual void UpdateColorTheme(BOOL darkMode) {}
 };

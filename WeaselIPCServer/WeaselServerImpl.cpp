@@ -197,6 +197,7 @@ void ServerImpl::RunDeferredApiWork() {
                                        option == ID_WEASELTRAY_ENABLE_ASCII);
         }
       }
+      DispatchPendingStatisticsSync();
     }
   }
   if (m_maintenance_pending || m_color_pending || m_option_pending) {
@@ -414,15 +415,25 @@ DWORD ServerImpl::OnStartMaintenance(WEASEL_IPC_COMMAND uMsg,
 DWORD ServerImpl::OnEndMaintenance(WEASEL_IPC_COMMAND uMsg,
                                    DWORD wParam,
                                    DWORD lParam) {
+  m_statistics_sync_pending = true;
   if (m_pRequestHandler)
     m_pRequestHandler->EndMaintenance();
+  DispatchPendingStatisticsSync();
+  return 0;
+}
+
+void ServerImpl::DispatchPendingStatisticsSync() {
+  if (!m_statistics_sync_pending || !m_pRequestHandler ||
+      !m_pRequestHandler->IsReady()) {
+    return;
+  }
+  m_statistics_sync_pending = false;
   try {
     if (m_statisticsSyncHandler)
       m_statisticsSyncHandler();
   } catch (...) {
     // Statistics synchronization must not affect maintenance completion.
   }
-  return 0;
 }
 
 DWORD ServerImpl::OnCommitComposition(WEASEL_IPC_COMMAND uMsg,

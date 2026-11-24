@@ -107,7 +107,6 @@ void RimeWithWeaselHandler::_Setup() {
   weasel_traits.log_dir = log_dir.c_str();
   rime_api->setup(&weasel_traits);
   rime_api->set_notification_handler(&RimeWithWeaselHandler::OnNotify, this);
-  _RefreshRuntimePaths();
 }
 
 void RimeWithWeaselHandler::Initialize() {
@@ -133,6 +132,15 @@ bool RimeWithWeaselHandler::_InitializeEngine(
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
   m_engine_initialized = true;
+  if (cancelled->load()) {
+    return false;
+  }
+  // Loading installation metadata is required even when CRC32 skips workspace
+  // maintenance. setup/initialize leave sync_dir at the relative default.
+  rime_api->deployer_initialize(nullptr);
+  if (!rime_api->run_task("installation_update")) {
+    return false;
+  }
   _RefreshRuntimePaths();
   const auto cache = _DeploymentCache();
   const auto current = cache.Check(cancelled);
@@ -165,6 +173,7 @@ bool RimeWithWeaselHandler::_InitializeEngine(
   } else {
     LOG(INFO) << "CRC32 deployment check: unchanged; skipping maintenance.";
   }
+  _RefreshRuntimePaths();
   return ready && !cancelled->load();
 }
 
@@ -683,6 +692,9 @@ void RimeWithWeaselHandler::_RefreshRuntimePaths() {
   } else {
     const char* path = rime_api->get_sync_dir();
     sync_dir = path ? path : std::string();
+  }
+  if (!std::filesystem::u8path(sync_dir).is_absolute()) {
+    sync_dir.clear();
   }
   std::lock_guard lock(m_paths_mutex);
   m_user_id = user_id ? user_id : std::string();

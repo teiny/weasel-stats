@@ -114,6 +114,7 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
  private:
   void _Finailize();
   void RunDeferredApiWork();
+  void DispatchPendingStatisticsSync();
   template <typename _Resp>
   void HandlePipeMessage(PipeMessage pipe_msg, _Resp resp);
 
@@ -128,6 +129,7 @@ class ServerImpl : public CWindowImpl<ServerImpl, CWindow, ServerWinTraits>
   SecurityAttribute sa;
   BOOL m_darkMode;
   bool m_maintenance_pending = false;
+  bool m_statistics_sync_pending = false;  // Protected by the API lock.
   bool m_color_pending = false;
   UINT m_option_pending = 0;
   LPARAM m_option_session = 0;

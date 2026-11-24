@@ -1,5 +1,6 @@
 #include "../../WeaselIPCServer/WeaselServerImpl.cpp"
 #include <RimeWithWeasel.h>
+#include "../../WeaselStats/StatsDatabase.h"
 RimeApi* TestRimeGetApi();
 #define rime_get_api TestRimeGetApi
 #include "../../RimeWithWeasel/RimeWithWeasel.cpp"
@@ -386,6 +387,28 @@ void TestRealBackgroundMaintenance() {
   Write(test_shared / L"test.dict.yaml",
         u8"---\nname: test\nversion: '1'\nsort: "
         u8"by_weight\n...\n甲\tjia\t1\n乙\tyi\t1\n");
+  const auto sync_root = root / L"configured-sync";
+  fs::create_directories(sync_root);
+  Write(test_user / L"installation.yaml",
+        "installation_id: ProbeWorker\nsync_dir: \"" +
+            sync_root.generic_u8string() + "\"\n");
+  auto sqlite = std::make_unique<weasel::stats::WinSqlite>();
+  Check(sqlite->Load(),
+        "loads SQLite for the maintenance-to-statistics bridge");
+  auto statistics = std::make_unique<weasel::stats::StatsDatabase>(*sqlite);
+  weasel::stats::Response summary{};
+  Check(statistics->Open(root / L"local-statistics.sqlite3") &&
+            statistics->RecordCommit("isolated-sync", 1, "ProbeWorker",
+                                     20261123, u8"甲乙", summary),
+        "records real statistics before maintenance synchronization");
+  {
+    weasel::stats::StatsDatabase remote(*sqlite);
+    Check(remote.Open(sync_root / L"weasel-input-statistics.sqlite3") &&
+              remote.RecordCommit("other-device", 1, "OtherDevice", 20261123,
+                                  u8"丙丁戊", summary),
+          "seeds the configured shared database with another device's "
+          "statistics");
+  }
   WindowFixture fixture;
   original_api = rime_get_api();
   isolated_api = *original_api;
@@ -398,6 +421,48 @@ void TestRealBackgroundMaintenance() {
     handler.OnMaintenanceReady([window = fixture.window] {
       PostMessage(window, WM_WEASEL_MAINTENANCE_READY, 0, 0);
     });
+    std::promise<std::string> first_sync;
+    auto first_sync_future = first_sync.get_future();
+    std::mutex synced_paths_mutex;
+    std::vector<std::string> synced_paths;
+    fixture.server->SetStatisticsSyncHandler([&] {
+      const auto directory = handler.GetSyncDir();
+      std::lock_guard lock(synced_paths_mutex);
+      synced_paths.push_back(directory);
+      if (synced_paths.size() == 1)
+        first_sync.set_value(directory);
+      return true;
+    });
+    auto sync_count = [&] {
+      std::lock_guard lock(synced_paths_mutex);
+      return synced_paths.size();
+    };
+    std::promise<bool> synchronized;
+    auto synchronized_future = synchronized.get_future();
+    std::thread statistics_worker([&] {
+      bool success = false;
+      if (first_sync_future.wait_for(std::chrono::seconds(10)) ==
+          std::future_status::ready) {
+        const auto directory = fs::u8path(first_sync_future.get());
+        // A failing regression must never publish to the working directory.
+        if (directory == sync_root && directory.is_absolute()) {
+          weasel::stats::Response response{};
+          success = statistics->Synchronize(directory, 20261123, response);
+        }
+      }
+      synchronized.set_value(success);
+    });
+    auto request_sync = [&] {
+      weasel::PipeChannel<weasel::PipeMessage, DWORD> client{
+          std::wstring(fixture.pipe_name)};
+      const bool connected = WaitUntil([&] { return client.Connect(); });
+      Check(connected, "sync client connects to the isolated service");
+      if (connected) {
+        weasel::PipeMessage request{WEASEL_IPC_END_MAINTENANCE, 0, 0};
+        client.Transact(request);
+      }
+      client.Disconnect();
+    };
     const auto started = std::chrono::steady_clock::now();
     handler.Initialize();
     Check(std::chrono::steady_clock::now() - started <
@@ -408,10 +473,7 @@ void TestRealBackgroundMaintenance() {
     Check(!fs::exists(test_user / L"build" / L".weasel-deployment-crc32"),
           "failed initialization cannot record a deployment baseline");
     const auto retry_started = std::chrono::steady_clock::now();
-    {
-      std::lock_guard lock(g_api_mutex);
-      handler.EndMaintenance();
-    }
+    request_sync();
     Check(std::chrono::steady_clock::now() - retry_started <
               std::chrono::milliseconds(200),
           "retry returns before real dictionary compilation finishes");
@@ -419,6 +481,9 @@ void TestRealBackgroundMaintenance() {
           "real Rime deployment reaches the background maintenance wait");
     Check(handler.IsMaintenanceRunning(),
           "service remains unready during deployment");
+    Check(sync_count() == 0,
+          "statistics synchronization waits for initialized paths and service "
+          "readiness");
     auto input = AcquireApiLock(&handler, WEASEL_IPC_START_SESSION);
     Check(!input.owns_lock(),
           "new sessions return unready during real deployment");
@@ -430,6 +495,23 @@ void TestRealBackgroundMaintenance() {
     SetEvent(allow_join);
     Check(WaitUntil([&] { return !handler.IsMaintenanceRunning(); }),
           "completion notification automatically restores the service");
+    statistics_worker.join();
+    Check(synchronized_future.get(),
+          "maintenance completion publishes real SQLite statistics to the "
+          "configured directory");
+    Check(fs::u8path(handler.GetSyncDir()) == sync_root,
+          "runtime cache contains the configured absolute synchronization "
+          "directory");
+    if (fs::exists(sync_root / L"weasel-input-statistics.sqlite3")) {
+      weasel::stats::StatsDatabase shared(*sqlite);
+      Check(shared.Open(sync_root / L"weasel-input-statistics.sqlite3") &&
+                shared.GetSummary(20261123, summary) &&
+                summary.overview_units == 5,
+            "the shared SQLite snapshot contains statistics from both devices");
+      Check(statistics->GetSummary(20261123, summary) &&
+                summary.overview_units == 5,
+            "statistics from the shared database are also merged back locally");
+    }
     const auto prism = test_user / L"build" / L"test.prism.bin";
     Check(fs::is_regular_file(prism),
           "background deployment produces a real spelling index");
@@ -455,6 +537,48 @@ void TestRealBackgroundMaintenance() {
             "unchanged synchronization automatically resumes");
       Check(joins == compiled && fs::last_write_time(prism) == built_time,
             "unchanged content resumes without recompiling dictionaries");
+      fail_initialize = true;
+      {
+        std::lock_guard lock(g_api_mutex);
+        handler.StartMaintenance();
+      }
+      request_sync();
+      Check(WaitUntil([&] { return !handler.IsMaintenanceRunning(); }) &&
+                sync_count() == 1,
+            "failed initialization retains synchronization without submitting "
+            "an invalid path");
+      {
+        std::lock_guard lock(g_api_mutex);
+        handler.EndMaintenance();
+      }
+      Check(WaitUntil([&] { return !handler.IsMaintenanceRunning(); }) &&
+                WaitUntil([&] { return sync_count() == 2; }),
+            "successful initialization retry submits the retained "
+            "synchronization");
+      const auto second_sync = root / L"changed-sync";
+      fs::create_directories(second_sync);
+      Write(test_user / L"installation.yaml",
+            "installation_id: ProbeWorker\nsync_dir: \"" +
+                second_sync.generic_u8string() + "\"\n");
+      {
+        std::lock_guard lock(g_api_mutex);
+        handler.StartMaintenance();
+      }
+      request_sync();
+      Check(WaitUntil([&] { return !handler.IsMaintenanceRunning(); }) &&
+                WaitUntil([&] { return sync_count() == 3; }),
+            "CRC32 cache hit still completes the pending statistics "
+            "synchronization");
+      Check(
+          fs::u8path(handler.GetSyncDir()) == second_sync && joins == compiled,
+          "installation-only path changes reload without dictionary "
+          "compilation");
+      {
+        std::lock_guard lock(synced_paths_mutex);
+        Check(!synced_paths.empty() &&
+                  fs::u8path(synced_paths.back()) == second_sync,
+              "statistics callback receives the new configured directory");
+      }
       const auto custom = test_user / L"default.custom.yaml";
       Write(custom, "patch:\n  menu/page_size: 5\n");
       {
@@ -520,11 +644,14 @@ void TestRealBackgroundMaintenance() {
     {
       std::lock_guard lock(g_api_mutex);
       handler.Finalize();
+      fixture.server->SetStatisticsSyncHandler({});
       fixture.server->SetRequestHandler(&fixture.handler);
     }
     Check(!handler.IsMaintenanceRunning(),
           "finalization joins the maintenance worker");
   }
+  statistics.reset();
+  sqlite.reset();
   const auto resolved = fs::weakly_canonical(root);
   if (resolved.parent_path() !=
           fs::canonical(fs::current_path()) / L"msbuild" ||

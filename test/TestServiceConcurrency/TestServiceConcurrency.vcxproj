@@ -38,6 +38,9 @@
     <ClCompile Include="TestServiceConcurrency.cpp" />
     <ClCompile Include="..\..\WeaselIPCServer\SecurityAttribute.cpp" />
     <ClCompile Include="..\..\RimeWithWeasel\DeploymentSnapshot.cpp" />
+    <ClCompile Include="..\..\WeaselStats\StatsDatabase.cpp" />
+    <ClCompile Include="..\..\WeaselStats\TextMetrics.cpp" />
+    <ClCompile Include="..\..\WeaselStats\WinSqlite.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\WeaselUI\WeaselUI.vcxproj"><AdditionalProperties>SolutionDir=$(SolutionDir)</AdditionalProperties></ProjectReference>

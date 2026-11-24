@@ -66,6 +66,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void EndMaintenance();
   virtual void CheckMaintenance();
   bool IsMaintenanceRunning() const override { return m_maintenance_running; }
+  bool IsReady() const override {
+    return !m_disabled && !m_maintenance_running;
+  }
   virtual void SetOption(WeaselSessionId ipc_id,
                          const std::string& opt,
                          bool val);

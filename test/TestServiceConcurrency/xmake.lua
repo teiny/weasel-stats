@@ -1,7 +1,10 @@
 target("TestServiceConcurrency")
   set_kind("binary")
   add_files("./*.cpp", "$(projectdir)/RimeWithWeasel/DeploymentSnapshot.cpp",
-    "$(projectdir)/WeaselIPCServer/SecurityAttribute.cpp")
+    "$(projectdir)/WeaselIPCServer/SecurityAttribute.cpp",
+    "$(projectdir)/WeaselStats/StatsDatabase.cpp",
+    "$(projectdir)/WeaselStats/TextMetrics.cpp",
+    "$(projectdir)/WeaselStats/WinSqlite.cpp")
   add_includedirs("$(projectdir)/WeaselIPCServer")
   add_deps("WeaselUI", "WeaselIPC")
   add_defines("RIME_IMPORTS")
