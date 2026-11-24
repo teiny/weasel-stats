@@ -41,6 +41,9 @@ int WeaselServerApp::Run() {
   win_sparkle_init();
   m_ui.Create(m_server.GetHWnd());
 
+  m_handler->OnMaintenanceReady([window = m_server.GetHWnd()]() {
+    PostMessage(window, WM_WEASEL_MAINTENANCE_READY, 0, 0);
+  });
   m_handler->Initialize();
   m_handler->OnUpdateUI([this]() { tray_icon.RequestRefresh(); });
 

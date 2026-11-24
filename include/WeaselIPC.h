@@ -39,6 +39,7 @@ enum WEASEL_IPC_COMMAND {
 // on the server message thread instead of a pipe worker thread.
 #define WM_WEASEL_SERVICE_NOTIFY (WEASEL_IPC_LAST_COMMAND + 200)
 #define WM_WEASEL_STATISTICS_SUMMARY (WEASEL_IPC_LAST_COMMAND + 201)
+#define WM_WEASEL_MAINTENANCE_READY (WEASEL_IPC_LAST_COMMAND + 202)
 
 namespace weasel {
 struct PipeMessage {
@@ -84,6 +85,9 @@ struct RequestHandler {
   virtual void UpdateInputPosition(RECT const& rc, DWORD session_id) {}
   virtual void StartMaintenance() {}
   virtual void EndMaintenance() {}
+  virtual void CheckMaintenance() {}
+  virtual bool IsMaintenanceRunning() const { return false; }
+  virtual bool IsReady() const { return !IsMaintenanceRunning(); }
   virtual void SetOption(DWORD session_id, const std::string& opt, bool val) {}
   virtual void UpdateColorTheme(BOOL darkMode) {}
 };

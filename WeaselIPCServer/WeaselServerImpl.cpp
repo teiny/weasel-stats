@@ -1,6 +1,8 @@
 ﻿#include "stdafx.h"
 #include "WeaselServerImpl.h"
 #include <mutex>
+#include <chrono>
+#include <vector>
 #include <Windows.h>
 #include <resource.h>
 #include <WeaselUtility.h>
@@ -18,20 +20,47 @@ class PipeServer : public PipeChannel<DWORD, PipeMessage> {
   void Listen(ServerHandler const& handler);
   /* Get a server runner */
   ServerRunner GetServerRunner(ServerHandler const& handler);
+  void Stop();
 
  private:
   void _ProcessPipeThread(HANDLE pipe, ServerHandler const& handler);
+  std::vector<std::unique_ptr<boost::thread>> workers;
 };
 }  // namespace weasel
 
 using namespace weasel;
 
+static std::timed_mutex g_api_mutex;
+
+// A request already waiting for the API lock must also notice maintenance.
+// Otherwise it can remain queued behind a long finalize/deployment operation.
+static std::unique_lock<std::timed_mutex> AcquireApiLock(
+    weasel::RequestHandler* handler,
+    WEASEL_IPC_COMMAND command) {
+  std::unique_lock<std::timed_mutex> lock(g_api_mutex, std::defer_lock);
+  const bool control = command == WEASEL_IPC_START_MAINTENANCE ||
+                       command == WEASEL_IPC_END_MAINTENANCE ||
+                       command == WEASEL_IPC_SHUTDOWN_SERVER;
+  do {
+    if (!control && handler && handler->IsMaintenanceRunning()) {
+      return lock;
+    }
+  } while (!lock.try_lock_for(std::chrono::milliseconds(20)));
+  if (!control && handler && handler->IsMaintenanceRunning()) {
+    lock.unlock();
+  }
+  return lock;
+}
+
 extern CAppModule _Module;
 
-ServerImpl::ServerImpl()
+ServerImpl::ServerImpl() : ServerImpl(GetPipeName()) {}
+
+ServerImpl::ServerImpl(std::wstring pipe_name)
     : m_pRequestHandler(NULL),
       m_darkMode(IsUserDarkMode()),
-      channel(std::make_unique<PipeServer>(GetPipeName(), sa.get_attr())) {
+      channel(
+          std::make_unique<PipeServer>(std::move(pipe_name), sa.get_attr())) {
   m_hUser32Module = GetModuleHandle(_T("user32.dll"));
 }
 
@@ -42,7 +71,11 @@ ServerImpl::~ServerImpl() {
 void ServerImpl::_Finailize() {
   if (pipeThread != nullptr) {
     pipeThread->interrupt();
-    pipeThread = nullptr;
+    while (!pipeThread->try_join_for(boost::chrono::milliseconds(20))) {
+      CancelSynchronousIo(pipeThread->native_handle());
+    }
+    pipeThread.reset();
+    channel->Stop();
   } else {
     // avoid finalize again
     return;
@@ -57,10 +90,8 @@ LRESULT ServerImpl::OnColorChange(UINT uMsg,
                                   WPARAM wParam,
                                   LPARAM lParam,
                                   BOOL& bHandled) {
-  if (IsUserDarkMode() != m_darkMode) {
-    m_darkMode = IsUserDarkMode();
-    m_pRequestHandler->UpdateColorTheme(m_darkMode);
-  }
+  m_color_pending = true;
+  RunDeferredApiWork();
   return 0;
 }
 
@@ -114,10 +145,10 @@ LRESULT ServerImpl::OnCommand(UINT uMsg,
   UINT uID = LOWORD(wParam);
   switch (uID) {
     case ID_WEASELTRAY_ENABLE_ASCII:
-      m_pRequestHandler->SetOption(lParam, "ascii_mode", true);
-      return 0;
     case ID_WEASELTRAY_DISABLE_ASCII:
-      m_pRequestHandler->SetOption(lParam, "ascii_mode", false);
+      m_option_pending = uID;
+      m_option_session = lParam;
+      RunDeferredApiWork();
       return 0;
     default:;
   }
@@ -135,12 +166,62 @@ LRESULT ServerImpl::OnServiceNotifyMessage(UINT uMsg,
                                            WPARAM wParam,
                                            LPARAM lParam,
                                            BOOL& bHandled) {
-  // Runs on the server message thread, NOT on a pipe worker thread and
-  // without holding g_api_mutex, so that Shell_NotifyIcon inside the tray
-  // update can never deadlock against the taskbar UI thread.
+  // Tray updates run without g_api_mutex so Shell_NotifyIcon cannot deadlock
+  // against the taskbar UI thread.
   if (m_trayRefreshCallback) {
     m_trayRefreshCallback();
   }
+  return 0;
+}
+
+void ServerImpl::RunDeferredApiWork() {
+  {
+    std::unique_lock lock(g_api_mutex, std::try_to_lock);
+    if (lock.owns_lock() && m_pRequestHandler) {
+      if (m_maintenance_pending) {
+        m_pRequestHandler->CheckMaintenance();
+        m_maintenance_pending = false;
+      }
+      if (!m_pRequestHandler->IsMaintenanceRunning()) {
+        if (m_color_pending) {
+          m_color_pending = false;
+          if (IsUserDarkMode() != m_darkMode) {
+            m_darkMode = IsUserDarkMode();
+            m_pRequestHandler->UpdateColorTheme(m_darkMode);
+          }
+        }
+        if (m_option_pending) {
+          const UINT option = m_option_pending;
+          m_option_pending = 0;
+          m_pRequestHandler->SetOption(m_option_session, "ascii_mode",
+                                       option == ID_WEASELTRAY_ENABLE_ASCII);
+        }
+      }
+      DispatchPendingStatisticsSync();
+    }
+  }
+  if (m_maintenance_pending || m_color_pending || m_option_pending) {
+    SetTimer(kMaintenanceTimer, 50);
+  } else {
+    KillTimer(kMaintenanceTimer);
+  }
+}
+
+LRESULT ServerImpl::OnMaintenanceReady(UINT, WPARAM, LPARAM, BOOL&) {
+  m_maintenance_pending = true;
+  RunDeferredApiWork();
+  return 0;
+}
+
+LRESULT ServerImpl::OnMaintenanceTimer(UINT,
+                                       WPARAM timer,
+                                       LPARAM,
+                                       BOOL& handled) {
+  if (timer != kMaintenanceTimer) {
+    handled = FALSE;
+    return 0;
+  }
+  RunDeferredApiWork();
   return 0;
 }
 
@@ -159,9 +240,8 @@ LRESULT ServerImpl::OnStatisticsSummaryMessage(UINT uMsg,
 DWORD ServerImpl::OnCommand(WEASEL_IPC_COMMAND uMsg,
                             DWORD wParam,
                             DWORD lParam) {
-  BOOL handled = TRUE;
-  OnCommand(uMsg, wParam, lParam, handled);
-  return handled;
+  // Pipe workers must not execute window/menu work while holding the API lock.
+  return PostMessage(WM_COMMAND, wParam, lParam) != FALSE;
 }
 
 HWND ServerImpl::Start() {
@@ -187,8 +267,6 @@ int ServerImpl::Stop() {
   return 0;
 }
 
-static std::mutex g_api_mutex;
-
 int ServerImpl::Run() {
   // This workaround causes a VC internal error:
   // void PipeServer::Listen(ServerHandler handler);
@@ -197,16 +275,25 @@ int ServerImpl::Run() {
   // auto listener = boost::bind(&PipeServer::Listen, channel.get(), handler);
   //
   auto listener = [this](PipeMessage msg, PipeServer::Respond resp) -> void {
-    std::lock_guard guard(g_api_mutex);
-    HandlePipeMessage(msg, resp);
+    DWORD result = 0;
+    {
+      auto lock = AcquireApiLock(m_pRequestHandler, msg.Msg);
+      if (lock.owns_lock()) {
+        HandlePipeMessage(msg, [&result](DWORD value) { result = value; });
+      }
+    }
+    // Response buffers are thread-local. A client that stops reading its pipe
+    // must not keep the Rime API locked while WriteFile/FlushFileBuffers waits.
+    resp(result);
   };
   pipeThread = std::make_unique<boost::thread>(
-      [this, &listener]() { channel->Listen(listener); });
+      [this, listener]() { channel->Listen(listener); });
 
   CMessageLoop theLoop;
   _Module.AddMessageLoop(&theLoop);
   int nRet = theLoop.Run();
   _Module.RemoveMessageLoop();
+  _Finailize();
   return nRet;
 }
 
@@ -328,15 +415,25 @@ DWORD ServerImpl::OnStartMaintenance(WEASEL_IPC_COMMAND uMsg,
 DWORD ServerImpl::OnEndMaintenance(WEASEL_IPC_COMMAND uMsg,
                                    DWORD wParam,
                                    DWORD lParam) {
+  m_statistics_sync_pending = true;
   if (m_pRequestHandler)
     m_pRequestHandler->EndMaintenance();
+  DispatchPendingStatisticsSync();
+  return 0;
+}
+
+void ServerImpl::DispatchPendingStatisticsSync() {
+  if (!m_statistics_sync_pending || !m_pRequestHandler ||
+      !m_pRequestHandler->IsReady()) {
+    return;
+  }
+  m_statistics_sync_pending = false;
   try {
     if (m_statisticsSyncHandler)
       m_statisticsSyncHandler();
   } catch (...) {
     // Statistics synchronization must not affect maintenance completion.
   }
-  return 0;
 }
 
 DWORD ServerImpl::OnCommitComposition(WEASEL_IPC_COMMAND uMsg,
@@ -442,8 +539,14 @@ void PipeServer::Listen(ServerHandler const& handler) {
     try {
       boost::this_thread::interruption_point();
       pipe = _ConnectServerPipe(pname);
-      boost::thread th(
-          [&handler, pipe, this] { _ProcessPipeThread(pipe, handler); });
+      for (auto worker = workers.begin(); worker != workers.end();) {
+        if ((*worker)->try_join_for(boost::chrono::milliseconds(0)))
+          worker = workers.erase(worker);
+        else
+          ++worker;
+      }
+      workers.push_back(std::make_unique<boost::thread>(
+          [handler, pipe, this] { _ProcessPipeThread(pipe, handler); }));
     } catch (DWORD ex) {
       _FinalizePipe(pipe);
     }
@@ -456,9 +559,21 @@ PipeServer::ServerRunner PipeServer::GetServerRunner(
   return [&handler, this]() { Listen(handler); };
 }
 
+void PipeServer::Stop() {
+  // The listener has already exited, so only this thread owns the worker list.
+  for (auto& worker : workers) {
+    worker->interrupt();
+    while (!worker->try_join_for(boost::chrono::milliseconds(20))) {
+      CancelSynchronousIo(worker->native_handle());
+    }
+  }
+  workers.clear();
+}
+
 void PipeServer::_ProcessPipeThread(HANDLE pipe, ServerHandler const& handler) {
   try {
     for (;;) {
+      boost::this_thread::interruption_point();
       Res msg;
       _Receive(pipe, &msg, sizeof(msg));
       handler(msg, [this, pipe](Msg resp) { _Send(pipe, resp); });

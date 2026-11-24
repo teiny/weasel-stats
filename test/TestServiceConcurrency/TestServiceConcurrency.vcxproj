@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{01D63839-3DA9-41CE-BED8-AE5EB2F8D047}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <SolutionDir>$(ProjectDir)..\..\</SolutionDir>
+  </PropertyGroup>
+  <Import Project="..\..\weasel.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>$(PLATFORM_TOOLSET)</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)..\..\msbuild\$(Configuration)\$(Platform)\</OutDir>
+    <IntDir>$(OutDir)$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;$(SolutionDir)WeaselIPCServer;$(BOOST_ROOT);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_CONSOLE;NDEBUG;RIME_IMPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>rime.lib;imm32.lib;usp10.lib;comctl32.lib;gdiplus.lib;shcore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)lib64;$(BOOST_ROOT)\stage\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <SubSystem>Console</SubSystem>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="TestServiceConcurrency.cpp" />
+    <ClCompile Include="..\..\WeaselIPCServer\SecurityAttribute.cpp" />
+    <ClCompile Include="..\..\RimeWithWeasel\DeploymentSnapshot.cpp" />
+    <ClCompile Include="..\..\WeaselStats\StatsDatabase.cpp" />
+    <ClCompile Include="..\..\WeaselStats\TextMetrics.cpp" />
+    <ClCompile Include="..\..\WeaselStats\WinSqlite.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\WeaselUI\WeaselUI.vcxproj"><AdditionalProperties>SolutionDir=$(SolutionDir)</AdditionalProperties></ProjectReference>
+    <ProjectReference Include="..\..\WeaselIPC\WeaselIPC.vcxproj"><AdditionalProperties>SolutionDir=$(SolutionDir)</AdditionalProperties></ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CopyRimeRuntime" AfterTargets="Build">
+    <Copy SourceFiles="$(SolutionDir)output\rime.dll" DestinationFolder="$(OutDir)" />
+  </Target>
+</Project>
